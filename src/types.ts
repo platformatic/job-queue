@@ -117,12 +117,12 @@ export interface QueueConfig<TPayload, TResult> {
 }
 
 /**
- * Queue events
+ * Queue events (tuple format for EventEmitter)
  */
 export interface QueueEvents<TResult> {
-  error: (error: Error) => void
-  completed: (id: string, result: TResult) => void
-  failed: (id: string, error: Error) => void
-  cancelled: (id: string) => void
-  stalled: (id: string) => void
+  error: [error: Error]
+  completed: [id: string, result: TResult]
+  failed: [id: string, error: Error]
+  cancelled: [id: string]
+  stalled: [id: string]
 }
