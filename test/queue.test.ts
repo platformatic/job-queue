@@ -1,6 +1,6 @@
 import { describe, it, beforeEach, afterEach } from 'node:test'
 import assert from 'node:assert'
-import { Queue, MemoryStorage } from '../src/index.ts'
+import { Queue, MemoryStorage, type Job } from '../src/index.ts'
 
 describe('Queue', () => {
   let storage: MemoryStorage
@@ -62,7 +62,7 @@ describe('Queue', () => {
     it('should process a job', async () => {
       let processed = false
 
-      queue.execute(async (job) => {
+      queue.execute(async (job: Job<{ value: number }>) => {
         processed = true
         return { result: job.payload.value * 2 }
       })
@@ -85,7 +85,7 @@ describe('Queue', () => {
         completedResult = result
       })
 
-      queue.execute(async (job) => {
+      queue.execute(async (job: Job<{ value: number }>) => {
         return { result: job.payload.value * 2 }
       })
 
@@ -100,7 +100,7 @@ describe('Queue', () => {
     })
 
     it('should store result after completion', async () => {
-      queue.execute(async (job) => {
+      queue.execute(async (job: Job<{ value: number }>) => {
         return { result: job.payload.value * 2 }
       })
 
@@ -115,7 +115,7 @@ describe('Queue', () => {
     })
 
     it('should return cached result for duplicate completed job', async () => {
-      queue.execute(async (job) => {
+      queue.execute(async (job: Job<{ value: number }>) => {
         return { result: job.payload.value * 2 }
       })
 
@@ -135,7 +135,7 @@ describe('Queue', () => {
 
   describe('enqueueAndWait', () => {
     it('should wait for job result', async () => {
-      queue.execute(async (job) => {
+      queue.execute(async (job: Job<{ value: number }>) => {
         return { result: job.payload.value * 2 }
       })
 
@@ -161,7 +161,7 @@ describe('Queue', () => {
     })
 
     it('should return immediately for already completed job', async () => {
-      queue.execute(async (job) => {
+      queue.execute(async (job: Job<{ value: number }>) => {
         return { result: job.payload.value * 2 }
       })
 
@@ -221,7 +221,7 @@ describe('Queue', () => {
 
       assert.strictEqual(failedId, 'job-1')
       assert.ok(failedError)
-      assert.strictEqual(failedError.name, 'MaxRetriesError')
+      assert.strictEqual((failedError as Error).name, 'MaxRetriesError')
     })
   })
 
@@ -299,7 +299,7 @@ describe('Queue', () => {
     })
 
     it('should include result for completed job', async () => {
-      queue.execute(async (job) => {
+      queue.execute(async (job: Job<{ value: number }>) => {
         return { result: job.payload.value * 2 }
       })
 
@@ -327,7 +327,7 @@ describe('Queue', () => {
       const processingTimes: number[] = []
       const startTime = Date.now()
 
-      concurrentQueue.execute(async (job) => {
+      concurrentQueue.execute(async (job: Job<{ value: number }>) => {
         const processStart = Date.now() - startTime
         await new Promise(resolve => setTimeout(resolve, 100))
         processingTimes.push(processStart)
