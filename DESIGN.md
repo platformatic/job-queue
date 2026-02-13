@@ -1183,14 +1183,18 @@ test/
     "module": "NodeNext",
     "moduleResolution": "NodeNext",
     "strict": true,
+    "esModuleInterop": true,
+    "skipLibCheck": true,
     "noEmit": true,
+    "resolveJsonModule": true,
     "isolatedModules": true,
     "verbatimModuleSyntax": true,
     "allowImportingTsExtensions": true,
     "lib": ["ES2022"],
     "types": ["node"]
   },
-  "include": ["src/**/*.ts", "test/**/*.ts"]
+  "include": ["src/**/*.ts", "test/**/*.ts"],
+  "exclude": ["node_modules"]
 }
 ```
 
@@ -1209,7 +1213,7 @@ test/
     "rewriteRelativeImportExtensions": true
   },
   "include": ["src/**/*.ts"],
-  "exclude": ["test"]
+  "exclude": ["node_modules", "test"]
 }
 ```
 
@@ -1230,11 +1234,13 @@ test/
   "files": ["dist"],
   "scripts": {
     "build": "tsc -p tsconfig.build.json",
+    "clean": "rm -rf dist",
+    "prepublishOnly": "npm run clean && npm run build",
     "test": "node --test test/*.test.ts",
     "typecheck": "tsc --noEmit"
   },
   "engines": {
-    "node": ">=22.6.0"
+    "node": ">=22.19.0"
   },
   "dependencies": {
     "fast-write-atomic": "^0.4.0",
