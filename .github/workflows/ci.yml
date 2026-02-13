@@ -73,6 +73,7 @@ jobs:
 
   test-valkey:
     runs-on: ubuntu-latest
+    timeout-minutes: 15
     services:
       valkey:
         image: valkey/valkey:8-alpine
