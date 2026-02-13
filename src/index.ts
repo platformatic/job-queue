@@ -30,6 +30,7 @@ export { JsonSerde, createJsonSerde } from './serde/index.ts'
 
 // Storage
 export type { Storage } from './storage/types.ts'
+export { MemoryStorage } from './storage/memory.ts'
 
 // Utils
 export { generateId, contentId } from './utils/id.ts'
