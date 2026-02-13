@@ -409,8 +409,6 @@ import { FileStorage } from '@platformatic/job-queue';
 
 const fileStorage = new FileStorage({
   directory: '/var/lib/job-queue',  // Base directory for all data
-  pollInterval: 100,                 // Polling interval in ms (default: 100)
-  lockTimeout: 5000,                 // File lock timeout in ms (default: 5000)
 });
 ```
 
@@ -419,9 +417,6 @@ const fileStorage = new FileStorage({
 ```typescript
 interface FileStorageConfig {
   directory: string;                  // Base directory for queue data (required)
-  pollInterval?: number;              // Dequeue polling interval in ms (default: 100)
-  lockTimeout?: number;               // File lock acquisition timeout (default: 5000)
-  fsyncOnWrite?: boolean;             // Force fsync after writes (default: true)
 }
 ```
 
@@ -455,8 +450,8 @@ interface FileStorageConfig {
 
 - **Single node only** — no distributed workers (files not shared across machines)
 - **Persistent** — survives process restarts
-- **Polling-based dequeue** — uses directory watching + polling
-- **File locking** — uses `flock` for atomic operations
+- **Event-driven dequeue** — uses `fs.watch` on queue directory (no polling)
+- **Atomic writes** — uses `fast-write-atomic` for safe file operations
 - **Notification via fs.watch** — watches notification files for completion
 - **TTL via mtime** — background cleaner removes expired files based on modification time
 
@@ -464,54 +459,66 @@ interface FileStorageConfig {
 
 **Atomic Operations:**
 ```typescript
-// Use proper-lockfile for cross-process atomicity
-import lockfile from 'proper-lockfile';
+// Use fast-write-atomic for atomic file writes
+import writeFileAtomic from 'fast-write-atomic';
 
 async enqueue(id: string, message: Buffer, timestamp: number): Promise<string | null> {
-  const release = await lockfile.lock(this.jobPath(id), {
-    retries: { retries: 5, minTimeout: 50 }
-  });
-  try {
-    // Check if job exists
-    const existing = await this.getJobState(id);
-    if (existing) return existing;
+  // Check if job exists (atomic read)
+  const existing = await this.getJobState(id);
+  if (existing) return existing;
 
-    // Write job state
-    await fs.writeFile(this.jobPath(id), JSON.stringify({
-      status: 'queued',
-      timestamp,
-    }));
+  // Write job state atomically
+  await writeFileAtomic.promise(
+    this.jobPath(id),
+    Buffer.from(JSON.stringify({ status: 'queued', timestamp }))
+  );
 
-    // Append to queue (atomic via rename)
-    const seq = await this.nextSequence();
-    const tempPath = path.join(this.tempDir, `${seq}.tmp`);
-    await fs.writeFile(tempPath, message);
-    await fs.rename(tempPath, path.join(this.queueDir, `${seq}.job`));
+  // Append to queue atomically
+  const seq = await this.nextSequence();
+  await writeFileAtomic.promise(
+    path.join(this.queueDir, `${seq}.job`),
+    message
+  );
 
-    return null;
-  } finally {
-    await release();
-  }
+  return null;
 }
 ```
 
-**Blocking Dequeue (Polling):**
+**Blocking Dequeue (File Watching):**
 ```typescript
 async dequeue(workerId: string, timeout: number): Promise<Buffer | null> {
-  const deadline = Date.now() + timeout * 1000;
+  // First, try to acquire any existing job
+  const existing = await this.tryAcquireNextJob(workerId);
+  if (existing) return existing;
 
-  while (Date.now() < deadline) {
-    const files = await fs.readdir(this.queueDir);
-    const sorted = files.filter(f => f.endsWith('.job')).sort();
+  // No jobs available, watch for new ones
+  return new Promise((resolve) => {
+    const timeoutId = setTimeout(() => {
+      watcher.close();
+      resolve(null);
+    }, timeout * 1000);
 
-    for (const file of sorted) {
-      const acquired = await this.tryAcquireJob(file, workerId);
-      if (acquired) return acquired;
-    }
+    const watcher = fs.watch(this.queueDir, async (event, filename) => {
+      if (event === 'rename' && filename?.endsWith('.job')) {
+        const job = await this.tryAcquireNextJob(workerId);
+        if (job) {
+          clearTimeout(timeoutId);
+          watcher.close();
+          resolve(job);
+        }
+      }
+    });
+  });
+}
 
-    await setTimeout(this.pollInterval);
+private async tryAcquireNextJob(workerId: string): Promise<Buffer | null> {
+  const files = await fs.readdir(this.queueDir);
+  const sorted = files.filter(f => f.endsWith('.job')).sort();
+
+  for (const file of sorted) {
+    const acquired = await this.tryAcquireJob(file, workerId);
+    if (acquired) return acquired;
   }
-
   return null;
 }
 ```
@@ -536,7 +543,7 @@ async subscribeToJob(
 }
 
 async notifyJobComplete(id: string, status: 'completed' | 'failed'): Promise<void> {
-  await fs.writeFile(this.notifyPath(id), status);
+  await writeFileAtomic.promise(this.notifyPath(id), Buffer.from(status));
 }
 ```
 
@@ -567,9 +574,9 @@ private async cleanupExpired(): Promise<void> {
 |--------|-------------|--------------|
 | Distribution | Single node | Multi-node |
 | Persistence | Yes | Yes (with AOF/RDB) |
-| Dequeue latency | ~pollInterval | ~0 (blocking) |
+| Dequeue latency | ~0 (fs.watch) | ~0 (blocking) |
 | Throughput | ~1000 jobs/sec | ~100k jobs/sec |
-| Atomic operations | File locks | Lua scripts |
+| Atomic operations | Atomic writes | Lua scripts |
 | Notifications | fs.watch | Pub/sub |
 | Use case | Edge, embedded | Production |
 
@@ -1230,8 +1237,8 @@ test/
     "node": ">=22.6.0"
   },
   "dependencies": {
-    "iovalkey": "^0.2.0",
-    "proper-lockfile": "^4.1.2"
+    "fast-write-atomic": "^0.4.0",
+    "iovalkey": "^0.2.0"
   }
 }
 ```
