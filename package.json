@@ -1,0 +1,56 @@
+{
+  "name": "@platformatic/job-queue",
+  "version": "0.1.0",
+  "description": "A reliable job queue with deduplication, request/response support, and pluggable storage",
+  "type": "module",
+  "main": "dist/index.js",
+  "types": "dist/index.d.ts",
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "import": "./dist/index.js"
+    }
+  },
+  "files": [
+    "dist"
+  ],
+  "scripts": {
+    "build": "tsc -p tsconfig.build.json",
+    "clean": "rm -rf dist",
+    "docker:up": "docker compose up -d",
+    "docker:down": "docker compose down",
+    "lint": "eslint",
+    "lint:fix": "eslint --fix",
+    "prepublishOnly": "npm run clean && npm run build",
+    "test": "npm run test:memory && npm run test:redis && npm run test:valkey",
+    "test:memory": "node --test test/*.test.ts",
+    "test:redis": "REDIS_URL=redis://localhost:6379 node --test test/*.test.ts",
+    "test:valkey": "REDIS_URL=redis://localhost:6380 node --test test/*.test.ts",
+    "typecheck": "tsc --noEmit"
+  },
+  "engines": {
+    "node": ">=22.19.0"
+  },
+  "dependencies": {
+    "fast-write-atomic": "^0.4.0",
+    "iovalkey": "^0.2.0"
+  },
+  "devDependencies": {
+    "@types/node": "^22.0.0",
+    "eslint": "^9.0.0",
+    "neostandard": "^0.12.0",
+    "typescript": "^5.7.0"
+  },
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/platformatic/job-queue.git"
+  },
+  "keywords": [
+    "queue",
+    "job-queue",
+    "redis",
+    "valkey",
+    "reliable-queue"
+  ],
+  "license": "MIT"
+}

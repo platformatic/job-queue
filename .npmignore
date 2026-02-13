@@ -1,0 +1,25 @@
+# Source files (dist is included via package.json files)
+src/
+test/
+
+# Config files
+tsconfig.json
+tsconfig.build.json
+eslint.config.js
+docker-compose.yml
+
+# Documentation (except README)
+DESIGN.md
+PLAN.md
+
+# IDE
+.idea/
+.vscode/
+
+# Test
+coverage/
+.nyc_output/
+
+# Environment
+.env
+.env.local
