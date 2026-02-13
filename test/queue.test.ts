@@ -276,6 +276,7 @@ describe('Queue', () => {
       // Job should not have been processed (it was cancelled)
       // Note: The job is still in the queue list but marked as cancelled in jobs hash
       // Consumer checks jobs hash and skips cancelled jobs
+      assert.strictEqual(processed, false)
     })
   })
 
