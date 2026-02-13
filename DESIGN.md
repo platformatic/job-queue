@@ -1174,6 +1174,16 @@ test/
 
 ## TypeScript Configuration
 
+### eslint.config.js
+
+```javascript
+import neostandard from 'neostandard'
+
+export default neostandard({
+  ts: true,
+})
+```
+
 ### tsconfig.json (Development)
 
 ```json
@@ -1235,6 +1245,8 @@ test/
   "scripts": {
     "build": "tsc -p tsconfig.build.json",
     "clean": "rm -rf dist",
+    "lint": "eslint",
+    "lint:fix": "eslint --fix",
     "prepublishOnly": "npm run clean && npm run build",
     "test": "node --test test/*.test.ts",
     "typecheck": "tsc --noEmit"
@@ -1245,6 +1257,11 @@ test/
   "dependencies": {
     "fast-write-atomic": "^0.4.0",
     "iovalkey": "^0.2.0"
+  },
+  "devDependencies": {
+    "eslint": "^9.0.0",
+    "neostandard": "^0.12.0",
+    "typescript": "^5.7.0"
   }
 }
 ```

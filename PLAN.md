@@ -7,6 +7,7 @@ This document outlines the implementation plan for `@platformatic/job-queue`.
 ### 1.1 Initialize Project Structure
 - [ ] Create `package.json` with dependencies (`iovalkey`, `fast-write-atomic`)
 - [ ] Create `tsconfig.json` and `tsconfig.build.json`
+- [ ] Create `eslint.config.js` with neostandard
 - [ ] Set up file structure as defined in DESIGN.md
 - [ ] Add `.gitignore`, `.npmignore`
 - [ ] Create `docker-compose.yml` for Redis and Valkey
