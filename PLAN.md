@@ -46,12 +46,16 @@ services:
     "docker:up": "docker compose up -d",
     "docker:down": "docker compose down",
     "test": "npm run test:memory && npm run test:redis && npm run test:valkey",
-    "test:memory": "node --test test/*.test.ts",
-    "test:redis": "REDIS_URL=redis://localhost:6379 node --test test/*.test.ts",
-    "test:valkey": "REDIS_URL=redis://localhost:6380 node --test test/*.test.ts"
+    "test:memory": "node --experimental-strip-types --test test/*.test.ts",
+    "test:redis": "REDIS_URL=redis://localhost:6379 node --experimental-strip-types --test test/*.test.ts",
+    "test:valkey": "REDIS_URL=redis://localhost:6380 node --experimental-strip-types --test test/*.test.ts",
+    "build": "tsc -p tsconfig.build.json",
+    "typecheck": "tsc --noEmit"
   }
 }
 ```
+
+**Note:** Node.js 22.6+ requires `--experimental-strip-types` for native TypeScript execution. This flag becomes unnecessary in Node.js 23.6+.
 
 ### 1.3 Define Core Types
 - [ ] `src/types.ts` - All TypeScript interfaces and types
