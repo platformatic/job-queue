@@ -354,7 +354,7 @@ interface Storage {
 ### Built-in Storage Implementations
 
 ```typescript
-import { RedisStorage, MemoryStorage } from '@platformatic/job-queue';
+import { RedisStorage, MemoryStorage, FileStorage } from '@platformatic/job-queue';
 
 // Redis/Valkey storage (distributed, persistent)
 const redisStorage = new RedisStorage({
@@ -365,6 +365,11 @@ const redisStorage = new RedisStorage({
 
 // In-memory storage (single process, testing)
 const memoryStorage = new MemoryStorage();
+
+// File storage (single node, persistent)
+const fileStorage = new FileStorage({
+  directory: '/var/lib/job-queue',
+});
 ```
 
 ### RedisStorage Configuration
@@ -394,6 +399,187 @@ interface RedisStorageConfig {
 - No blocking dequeue — uses polling internally
 - Full API compatibility with RedisStorage
 - Useful for unit tests, development, and embedded use cases
+
+### FileStorage
+
+Filesystem-based storage for single-node persistence without Redis. Useful for edge deployments, embedded systems, or scenarios where Redis is unavailable but persistence is needed.
+
+```typescript
+import { FileStorage } from '@platformatic/job-queue';
+
+const fileStorage = new FileStorage({
+  directory: '/var/lib/job-queue',  // Base directory for all data
+  pollInterval: 100,                 // Polling interval in ms (default: 100)
+  lockTimeout: 5000,                 // File lock timeout in ms (default: 5000)
+});
+```
+
+### FileStorage Configuration
+
+```typescript
+interface FileStorageConfig {
+  directory: string;                  // Base directory for queue data (required)
+  pollInterval?: number;              // Dequeue polling interval in ms (default: 100)
+  lockTimeout?: number;               // File lock acquisition timeout (default: 5000)
+  fsyncOnWrite?: boolean;             // Force fsync after writes (default: true)
+}
+```
+
+### FileStorage Directory Structure
+
+```
+{directory}/
+├── queue/                           # Main work queue
+│   ├── 0000000001.job               # Job files ordered by sequence number
+│   ├── 0000000002.job
+│   └── ...
+├── processing/                      # Per-worker processing queues
+│   └── {workerId}/
+│       ├── 0000000001.job
+│       └── ...
+├── jobs/                            # Job state files
+│   └── {jobId}.json                 # State: { status, timestamp, workerId, attempts }
+├── results/                         # Job results with TTL
+│   └── {jobId}.result               # Binary result data
+├── errors/                          # Job errors with TTL
+│   └── {jobId}.error                # Binary error data
+├── workers/                         # Worker registration
+│   └── {workerId}.worker            # Heartbeat file with mtime-based TTL
+├── notifications/                   # Job completion notifications
+│   └── {jobId}.notify               # Notification files watched by waiters
+├── sequence.lock                    # Sequence number lock file
+└── sequence                         # Current sequence number
+```
+
+### FileStorage Characteristics
+
+- **Single node only** — no distributed workers (files not shared across machines)
+- **Persistent** — survives process restarts
+- **Polling-based dequeue** — uses directory watching + polling
+- **File locking** — uses `flock` for atomic operations
+- **Notification via fs.watch** — watches notification files for completion
+- **TTL via mtime** — background cleaner removes expired files based on modification time
+
+### FileStorage Implementation Notes
+
+**Atomic Operations:**
+```typescript
+// Use proper-lockfile for cross-process atomicity
+import lockfile from 'proper-lockfile';
+
+async enqueue(id: string, message: Buffer, timestamp: number): Promise<string | null> {
+  const release = await lockfile.lock(this.jobPath(id), {
+    retries: { retries: 5, minTimeout: 50 }
+  });
+  try {
+    // Check if job exists
+    const existing = await this.getJobState(id);
+    if (existing) return existing;
+
+    // Write job state
+    await fs.writeFile(this.jobPath(id), JSON.stringify({
+      status: 'queued',
+      timestamp,
+    }));
+
+    // Append to queue (atomic via rename)
+    const seq = await this.nextSequence();
+    const tempPath = path.join(this.tempDir, `${seq}.tmp`);
+    await fs.writeFile(tempPath, message);
+    await fs.rename(tempPath, path.join(this.queueDir, `${seq}.job`));
+
+    return null;
+  } finally {
+    await release();
+  }
+}
+```
+
+**Blocking Dequeue (Polling):**
+```typescript
+async dequeue(workerId: string, timeout: number): Promise<Buffer | null> {
+  const deadline = Date.now() + timeout * 1000;
+
+  while (Date.now() < deadline) {
+    const files = await fs.readdir(this.queueDir);
+    const sorted = files.filter(f => f.endsWith('.job')).sort();
+
+    for (const file of sorted) {
+      const acquired = await this.tryAcquireJob(file, workerId);
+      if (acquired) return acquired;
+    }
+
+    await setTimeout(this.pollInterval);
+  }
+
+  return null;
+}
+```
+
+**Notification via fs.watch:**
+```typescript
+async subscribeToJob(
+  id: string,
+  handler: (status: 'completed' | 'failed') => void
+): Promise<() => Promise<void>> {
+  const notifyPath = this.notifyPath(id);
+
+  const watcher = fs.watch(path.dirname(notifyPath), (event, filename) => {
+    if (filename === path.basename(notifyPath)) {
+      fs.readFile(notifyPath, 'utf8').then(status => {
+        handler(status as 'completed' | 'failed');
+      });
+    }
+  });
+
+  return async () => { watcher.close(); };
+}
+
+async notifyJobComplete(id: string, status: 'completed' | 'failed'): Promise<void> {
+  await fs.writeFile(this.notifyPath(id), status);
+}
+```
+
+**TTL Cleanup (Background):**
+```typescript
+private async cleanupExpired(): Promise<void> {
+  // Results
+  for (const file of await fs.readdir(this.resultsDir)) {
+    const stat = await fs.stat(path.join(this.resultsDir, file));
+    if (Date.now() - stat.mtimeMs > this.resultTTL) {
+      await fs.unlink(path.join(this.resultsDir, file));
+    }
+  }
+
+  // Worker heartbeats
+  for (const file of await fs.readdir(this.workersDir)) {
+    const stat = await fs.stat(path.join(this.workersDir, file));
+    if (Date.now() - stat.mtimeMs > this.workerTTL) {
+      await fs.unlink(path.join(this.workersDir, file));
+    }
+  }
+}
+```
+
+### FileStorage Limitations
+
+| Aspect | FileStorage | RedisStorage |
+|--------|-------------|--------------|
+| Distribution | Single node | Multi-node |
+| Persistence | Yes | Yes (with AOF/RDB) |
+| Dequeue latency | ~pollInterval | ~0 (blocking) |
+| Throughput | ~1000 jobs/sec | ~100k jobs/sec |
+| Atomic operations | File locks | Lua scripts |
+| Notifications | fs.watch | Pub/sub |
+| Use case | Edge, embedded | Production |
+
+### FileStorage Use Cases
+
+- **Edge deployments** — IoT devices, edge servers without Redis
+- **Embedded applications** — Desktop apps, CLI tools needing persistent queues
+- **Development** — Local development with persistence (unlike MemoryStorage)
+- **Simple deployments** — Single-server apps where Redis is overkill
+- **Offline-first** — Apps that need to queue jobs while disconnected
 
 ### Serialization
 
@@ -961,7 +1147,8 @@ src/
 │   ├── types.ts             # Storage interface definition
 │   ├── redis.ts             # RedisStorage implementation
 │   ├── redis-scripts.ts     # Lua scripts for atomic operations
-│   └── memory.ts            # MemoryStorage implementation
+│   ├── memory.ts            # MemoryStorage implementation
+│   └── file.ts              # FileStorage implementation
 └── utils/
     └── id.ts                # ID generation helpers
 
@@ -973,6 +1160,7 @@ test/
 ├── request-response.test.ts
 ├── serde.test.ts            # Verifies custom serde (msgpack) works
 ├── memory-storage.test.ts   # MemoryStorage tests
+├── file-storage.test.ts     # FileStorage tests
 └── fixtures/
     └── redis.ts             # Test Redis setup
 ```
@@ -1042,7 +1230,8 @@ test/
     "node": ">=22.6.0"
   },
   "dependencies": {
-    "iovalkey": "^0.2.0"
+    "iovalkey": "^0.2.0",
+    "proper-lockfile": "^4.1.2"
   }
 }
 ```
