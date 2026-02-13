@@ -33,6 +33,7 @@ jobs:
 
   test-memory:
     runs-on: ubuntu-latest
+    timeout-minutes: 15
     steps:
       - uses: actions/checkout@v4
 
@@ -46,6 +47,7 @@ jobs:
 
   test-redis:
     runs-on: ubuntu-latest
+    timeout-minutes: 15
     services:
       redis:
         image: redis:7-alpine

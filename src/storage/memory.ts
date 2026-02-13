@@ -38,6 +38,9 @@ export class MemoryStorage implements Storage {
   }
 
   async connect (): Promise<void> {
+    // Already connected
+    if (this.#cleanupInterval) return
+
     // Start TTL cleanup interval (every 1 second)
     this.#cleanupInterval = setInterval(() => {
       this.#cleanupExpired()
