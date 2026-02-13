@@ -9,8 +9,51 @@ This document outlines the implementation plan for `@platformatic/job-queue`.
 - [ ] Create `tsconfig.json` and `tsconfig.build.json`
 - [ ] Set up file structure as defined in DESIGN.md
 - [ ] Add `.gitignore`, `.npmignore`
+- [ ] Create `docker-compose.yml` for Redis and Valkey
 
-### 1.2 Define Core Types
+### 1.2 Docker Compose Setup
+
+Create `docker-compose.yml` to run both Redis and Valkey for testing:
+
+```yaml
+services:
+  redis:
+    image: redis:7-alpine
+    ports:
+      - "6379:6379"
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 1s
+      timeout: 3s
+      retries: 5
+
+  valkey:
+    image: valkey/valkey:8-alpine
+    ports:
+      - "6380:6379"
+    healthcheck:
+      test: ["CMD", "valkey-cli", "ping"]
+      interval: 1s
+      timeout: 3s
+      retries: 5
+```
+
+**Scripts in package.json:**
+
+```json
+{
+  "scripts": {
+    "docker:up": "docker compose up -d",
+    "docker:down": "docker compose down",
+    "test": "npm run test:memory && npm run test:redis && npm run test:valkey",
+    "test:memory": "node --test test/*.test.ts",
+    "test:redis": "REDIS_URL=redis://localhost:6379 node --test test/*.test.ts",
+    "test:valkey": "REDIS_URL=redis://localhost:6380 node --test test/*.test.ts"
+  }
+}
+```
+
+### 1.3 Define Core Types
 - [ ] `src/types.ts` - All TypeScript interfaces and types
   - `QueueMessage<T>`
   - `QueueConfig<TPayload, TResult>`
@@ -19,14 +62,14 @@ This document outlines the implementation plan for `@platformatic/job-queue`.
   - `MessageStatus`, `MessageState`
   - `Job<TPayload>`, `JobHandler<TPayload, TResult>`
 
-### 1.3 Define Errors
+### 1.4 Define Errors
 - [ ] `src/errors.ts` - Custom error classes
   - `TimeoutError`
   - `MaxRetriesError`
   - `JobNotFoundError`
   - `StorageError`
 
-### 1.4 Define Serde Interface
+### 1.5 Define Serde Interface
 - [ ] `src/serde/index.ts`
   - `Serde<T>` interface
   - `JsonSerde` implementation (default)
@@ -157,17 +200,19 @@ This document outlines the implementation plan for `@platformatic/job-queue`.
   - SHA caching
 
 **Tests:**
-- [ ] `test/redis-storage.test.ts` (requires Redis)
-  - All MemoryStorage tests against Redis
+- [ ] `test/redis-storage.test.ts` (runs against both Redis and Valkey)
+  - All MemoryStorage tests against Redis/Valkey
   - Lua script atomicity
   - BLMOVE blocking behavior
   - Pub/sub notifications
   - Processing queue TTL
+  - Tests run twice: once with `REDIS_URL=redis://localhost:6379` (Redis), once with `REDIS_URL=redis://localhost:6380` (Valkey)
 
 ### 6.3 Test Fixtures
 - [ ] `test/fixtures/redis.ts`
-  - Redis connection setup/teardown
+  - Connection setup from `REDIS_URL` env var
   - Key cleanup between tests
+  - Shared fixture for Redis and Valkey
 
 ## Phase 7: File Storage
 
@@ -191,10 +236,11 @@ This document outlines the implementation plan for `@platformatic/job-queue`.
 
 ### 8.1 End-to-End Tests
 - [ ] `test/integration/e2e.test.ts`
-  - Full workflow with Redis
+  - Full workflow with Redis and Valkey
   - Multiple producers/consumers
   - Failure scenarios
   - Recovery scenarios
+  - CI runs against both backends
 
 ### 8.2 Serde Tests
 - [ ] `test/serde.test.ts`
