@@ -32,5 +32,8 @@ export { JsonSerde, createJsonSerde } from './serde/index.ts'
 export type { Storage } from './storage/types.ts'
 export { MemoryStorage } from './storage/memory.ts'
 
+// Queue
+export { Queue } from './queue.ts'
+
 // Utils
 export { generateId, contentId } from './utils/id.ts'
