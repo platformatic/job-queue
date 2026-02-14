@@ -1,5 +1,6 @@
 import { describe, it, beforeEach, afterEach } from 'node:test'
 import assert from 'node:assert'
+import { setTimeout as sleep } from 'node:timers/promises'
 import { Queue, MemoryStorage, type Job } from '../src/index.ts'
 
 describe('Request/Response', () => {
@@ -41,7 +42,6 @@ describe('Request/Response', () => {
       })
 
       concurrentQueue.execute(async (job: Job<{ value: number }>) => {
-        await new Promise(resolve => setTimeout(resolve, 50))
         return { result: job.payload.value * 2 }
       })
 
@@ -66,20 +66,20 @@ describe('Request/Response', () => {
   describe('timeout handling', () => {
     it('should timeout if job takes too long', async () => {
       queue.execute(async () => {
-        await new Promise(resolve => setTimeout(resolve, 10000))
+        await new Promise(() => {}) // Never resolves
         return { result: 0 }
       })
 
       await queue.start()
 
+      // Use a short real timeout
       await assert.rejects(
-        queue.enqueueAndWait('job-1', { value: 21 }, { timeout: 100 }),
+        queue.enqueueAndWait('job-1', { value: 21 }, { timeout: 50 }),
         (err: Error) => err.name === 'TimeoutError'
       )
     })
 
     it('should use default timeout when not specified', async () => {
-      // Default timeout is 30000ms, so this should work
       queue.execute(async (job: Job<{ value: number }>) => {
         return { result: job.payload.value }
       })
@@ -112,10 +112,14 @@ describe('Request/Response', () => {
   describe('duplicate job handling', () => {
     it('should wait for in-progress job to complete', async () => {
       let callCount = 0
+      let resolveJob: (() => void) | null = null
+      const jobStarted = new Promise<void>(resolve => { resolveJob = resolve })
 
       queue.execute(async (job: Job<{ value: number }>) => {
         callCount++
-        await new Promise(resolve => setTimeout(resolve, 100))
+        resolveJob!()
+        // Wait a bit to simulate work
+        await sleep(50)
         return { result: job.payload.value * 2 }
       })
 
@@ -124,10 +128,10 @@ describe('Request/Response', () => {
       // Start first request
       const promise1 = queue.enqueueAndWait('job-1', { value: 21 }, { timeout: 5000 })
 
-      // Wait a bit for job to start processing
-      await new Promise(resolve => setTimeout(resolve, 20))
+      // Wait for job to actually start processing
+      await jobStarted
 
-      // Start second request with same ID
+      // Start second request with same ID while first is processing
       const promise2 = queue.enqueueAndWait('job-1', { value: 999 }, { timeout: 5000 })
 
       const [result1, result2] = await Promise.all([promise1, promise2])
@@ -143,15 +147,6 @@ describe('Request/Response', () => {
     it('should handle duplicate enqueue while job is queued', async () => {
       let callCount = 0
 
-      // Don't start queue yet - jobs will sit in queue
-      queue.execute(async (job: Job<{ value: number }>) => {
-        callCount++
-        return { result: job.payload.value * 2 }
-      })
-
-      await queue.start()
-
-      // Use a slow handler to keep job in queue longer
       const slowQueue = new Queue<{ value: number }, { result: number }>({
         storage,
         concurrency: 1,
@@ -160,13 +155,12 @@ describe('Request/Response', () => {
 
       slowQueue.execute(async (job: Job<{ value: number }>) => {
         callCount++
-        await new Promise(resolve => setTimeout(resolve, 50))
         return { result: job.payload.value * 2 }
       })
 
       await slowQueue.start()
 
-      // Both requests for same job ID
+      // Both requests for same job ID - second will find duplicate
       const promise1 = slowQueue.enqueueAndWait('slow-job', { value: 10 }, { timeout: 5000 })
       const promise2 = slowQueue.enqueueAndWait('slow-job', { value: 20 }, { timeout: 5000 })
 
@@ -210,7 +204,7 @@ describe('Request/Response', () => {
         (err: Error) => err.name === 'JobFailedError'
       )
 
-      // Second call should also fail (cached failure)
+      // Second call should also fail immediately (cached failure)
       await assert.rejects(
         queue.enqueueAndWait('job-1', { value: 21 }, { timeout: 100 }),
         (err: Error) => err.name === 'JobFailedError'
@@ -253,22 +247,21 @@ describe('Request/Response', () => {
 
       cleanupQueue.execute(async (job: Job<{ value: number }>) => {
         if (job.id === 'job-1') {
-          // This job will take a long time
-          await new Promise(resolve => setTimeout(resolve, 10000))
+          // This job will never complete
+          await new Promise(() => {})
         }
         return { result: job.payload.value }
       })
 
       await cleanupQueue.start()
 
-      // This will timeout
+      // This will timeout (short real timeout, no fake timers)
       await assert.rejects(
         cleanupQueue.enqueueAndWait('job-1', { value: 21 }, { timeout: 50 }),
         (err: Error) => err.name === 'TimeoutError'
       )
 
       // Should be able to start more jobs without subscription leaks
-      // job-2 can run because concurrency is 2
       const result = await cleanupQueue.enqueueAndWait('job-2', { value: 100 }, { timeout: 5000 })
       assert.deepStrictEqual(result, { result: 100 })
 
