@@ -35,5 +35,8 @@ export { MemoryStorage } from './storage/memory.ts'
 // Queue
 export { Queue } from './queue.ts'
 
+// Reaper
+export { Reaper } from './reaper.ts'
+
 // Utils
 export { generateId, contentId } from './utils/id.ts'
