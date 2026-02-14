@@ -24,8 +24,8 @@
     "prepublishOnly": "npm run clean && npm run build",
     "test": "npm run test:memory && npm run test:redis && npm run test:valkey",
     "test:memory": "node --test test/*.test.ts",
-    "test:redis": "REDIS_URL=redis://localhost:6379 node --test test/*.test.ts",
-    "test:valkey": "REDIS_URL=redis://localhost:6380 node --test test/*.test.ts",
+    "test:redis": "REDIS_URL=${REDIS_URL:-redis://localhost:6379} node --test test/*.test.ts",
+    "test:valkey": "REDIS_URL=${REDIS_URL:-redis://localhost:6380} node --test test/*.test.ts",
     "typecheck": "tsc --noEmit"
   },
   "engines": {
