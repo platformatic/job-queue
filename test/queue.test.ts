@@ -1,5 +1,7 @@
 import { describe, it, beforeEach, afterEach } from 'node:test'
 import assert from 'node:assert'
+import { setTimeout as sleep } from 'node:timers/promises'
+import { once } from 'node:events'
 import { Queue, MemoryStorage, type Job } from '../src/index.ts'
 
 describe('Queue', () => {
@@ -70,21 +72,13 @@ describe('Queue', () => {
       await queue.start()
       await queue.enqueue('job-1', { value: 21 })
 
-      // Wait for processing
-      await new Promise(resolve => setTimeout(resolve, 100))
+      // Wait for completed event
+      await once(queue, 'completed')
 
       assert.strictEqual(processed, true)
     })
 
     it('should emit completed event', async () => {
-      let completedId: string | null = null
-      let completedResult: { result: number } | null = null
-
-      queue.on('completed', (id, result) => {
-        completedId = id
-        completedResult = result
-      })
-
       queue.execute(async (job: Job<{ value: number }>) => {
         return { result: job.payload.value * 2 }
       })
@@ -92,8 +86,7 @@ describe('Queue', () => {
       await queue.start()
       await queue.enqueue('job-1', { value: 21 })
 
-      // Wait for processing
-      await new Promise(resolve => setTimeout(resolve, 100))
+      const [completedId, completedResult] = await once(queue, 'completed')
 
       assert.strictEqual(completedId, 'job-1')
       assert.deepStrictEqual(completedResult, { result: 42 })
@@ -107,8 +100,8 @@ describe('Queue', () => {
       await queue.start()
       await queue.enqueue('job-1', { value: 21 })
 
-      // Wait for processing
-      await new Promise(resolve => setTimeout(resolve, 100))
+      // Wait for completed event
+      await once(queue, 'completed')
 
       const result = await queue.getResult('job-1')
       assert.deepStrictEqual(result, { result: 42 })
@@ -122,8 +115,8 @@ describe('Queue', () => {
       await queue.start()
       await queue.enqueue('job-1', { value: 21 })
 
-      // Wait for processing
-      await new Promise(resolve => setTimeout(resolve, 100))
+      // Wait for completed event
+      await once(queue, 'completed')
 
       const duplicateResult = await queue.enqueue('job-1', { value: 999 })
       assert.strictEqual(duplicateResult.status, 'completed')
@@ -146,18 +139,23 @@ describe('Queue', () => {
     })
 
     it('should timeout if job takes too long', async () => {
+      let jobStarted = false
       queue.execute(async () => {
-        // Never completes within timeout
-        await new Promise(resolve => setTimeout(resolve, 10000))
+        jobStarted = true
+        // This will never complete within timeout
+        await new Promise(() => {}) // Never resolves
         return { result: 0 }
       })
 
       await queue.start()
 
+      // Use a short real timeout - no fake timers needed
       await assert.rejects(
-        queue.enqueueAndWait('job-1', { value: 21 }, { timeout: 100 }),
+        queue.enqueueAndWait('job-1', { value: 21 }, { timeout: 50 }),
         (err: Error) => err.name === 'TimeoutError'
       )
+
+      assert.strictEqual(jobStarted, true)
     })
 
     it('should return immediately for already completed job', async () => {
@@ -191,8 +189,8 @@ describe('Queue', () => {
       await queue.start()
       await queue.enqueue('job-1', { value: 1 })
 
-      // Wait for retries
-      await new Promise(resolve => setTimeout(resolve, 500))
+      // Wait for completed event (after retries succeed)
+      await once(queue, 'completed')
 
       assert.strictEqual(attempts, 3)
 
@@ -201,14 +199,6 @@ describe('Queue', () => {
     })
 
     it('should emit failed event after max retries', async () => {
-      let failedId: string | null = null
-      let failedError: Error | null = null
-
-      queue.on('failed', (id, error) => {
-        failedId = id
-        failedError = error
-      })
-
       queue.execute(async () => {
         throw new Error('Always fails')
       })
@@ -216,8 +206,8 @@ describe('Queue', () => {
       await queue.start()
       await queue.enqueue('job-1', { value: 1 }, { maxAttempts: 2 })
 
-      // Wait for retries
-      await new Promise(resolve => setTimeout(resolve, 500))
+      // Wait for failed event
+      const [failedId, failedError] = await once(queue, 'failed')
 
       assert.strictEqual(failedId, 'job-1')
       assert.ok(failedError)
@@ -270,12 +260,10 @@ describe('Queue', () => {
       })
       await queue.start()
 
-      // Wait a bit
-      await new Promise(resolve => setTimeout(resolve, 200))
+      // Give consumer time to attempt dequeue
+      await sleep(50)
 
       // Job should not have been processed (it was cancelled)
-      // Note: The job is still in the queue list but marked as cancelled in jobs hash
-      // Consumer checks jobs hash and skips cancelled jobs
       assert.strictEqual(processed, false)
     })
   })
@@ -307,8 +295,8 @@ describe('Queue', () => {
       await queue.start()
       await queue.enqueue('job-1', { value: 21 })
 
-      // Wait for processing
-      await new Promise(resolve => setTimeout(resolve, 100))
+      // Wait for completed event
+      await once(queue, 'completed')
 
       const status = await queue.getStatus('job-1')
       assert.ok(status)
@@ -328,11 +316,21 @@ describe('Queue', () => {
       const processingTimes: number[] = []
       const startTime = Date.now()
 
+      // Create promise that resolves when 3 jobs complete
+      let resolveAll: () => void
+      const allCompleted = new Promise<void>(resolve => { resolveAll = resolve })
+      let completedCount = 0
+
       concurrentQueue.execute(async (job: Job<{ value: number }>) => {
         const processStart = Date.now() - startTime
-        await new Promise(resolve => setTimeout(resolve, 100))
+        await sleep(50)
         processingTimes.push(processStart)
         return { result: job.payload.value }
+      })
+
+      concurrentQueue.on('completed', () => {
+        completedCount++
+        if (completedCount === 3) resolveAll()
       })
 
       await concurrentQueue.start()
@@ -342,13 +340,12 @@ describe('Queue', () => {
       await concurrentQueue.enqueue('job-2', { value: 2 })
       await concurrentQueue.enqueue('job-3', { value: 3 })
 
-      // Wait for all to complete
-      await new Promise(resolve => setTimeout(resolve, 300))
+      // Wait for all 3 to complete
+      await allCompleted
 
       await concurrentQueue.stop()
 
       // All 3 jobs should have started roughly at the same time
-      // (within 50ms of each other if truly concurrent)
       assert.strictEqual(processingTimes.length, 3)
 
       const maxDiff = Math.max(...processingTimes) - Math.min(...processingTimes)

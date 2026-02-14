@@ -1,5 +1,6 @@
 import { describe, it, beforeEach, afterEach } from 'node:test'
 import assert from 'node:assert'
+import { setTimeout as sleep } from 'node:timers/promises'
 import { MemoryStorage } from '../src/storage/memory.ts'
 
 describe('MemoryStorage', () => {
@@ -174,7 +175,7 @@ describe('MemoryStorage', () => {
       await storage.setResult('job-1', result, 1) // 1ms TTL
 
       // Wait for expiration
-      await new Promise(resolve => setTimeout(resolve, 10))
+      await sleep(10)
 
       const retrieved = await storage.getResult('job-1')
       assert.strictEqual(retrieved, null)
@@ -210,7 +211,7 @@ describe('MemoryStorage', () => {
       await storage.refreshWorker('worker-1', 60000) // Refresh with longer TTL
 
       // Wait a bit
-      await new Promise(resolve => setTimeout(resolve, 150))
+      await sleep(150)
 
       const workers = await storage.getWorkers()
       assert.deepStrictEqual(workers, ['worker-1'])
@@ -227,7 +228,7 @@ describe('MemoryStorage', () => {
     it('should not return expired workers', async () => {
       await storage.registerWorker('worker-1', 1) // 1ms TTL
 
-      await new Promise(resolve => setTimeout(resolve, 10))
+      await sleep(10)
 
       const workers = await storage.getWorkers()
       assert.deepStrictEqual(workers, [])
