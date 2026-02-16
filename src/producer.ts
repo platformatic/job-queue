@@ -6,11 +6,11 @@ import type {
   EnqueueAndWaitOptions,
   EnqueueResult,
   CancelResult,
-  MessageStatus,
-  MessageState
+  MessageStatus
 } from './types.ts'
 import { TimeoutError, JobFailedError } from './errors.ts'
 import { createJsonSerde } from './serde/index.ts'
+import { parseState } from './utils/state.ts'
 
 interface ProducerConfig<TPayload, TResult> {
   storage: Storage
@@ -18,18 +18,6 @@ interface ProducerConfig<TPayload, TResult> {
   resultSerde?: Serde<TResult>
   maxRetries?: number
   resultTTL?: number
-}
-
-/**
- * Parse job state string into components
- */
-function parseState (state: string): { status: MessageState, timestamp: number, extra?: string } {
-  const parts = state.split(':')
-  return {
-    status: parts[0] as MessageState,
-    timestamp: parseInt(parts[1], 10),
-    extra: parts[2]
-  }
 }
 
 /**
@@ -99,65 +87,51 @@ export class Producer<TPayload, TResult> {
     const timeout = options?.timeout ?? 30000
 
     // Subscribe BEFORE enqueue to avoid race conditions
-    let unsubscribe: (() => Promise<void>) | null = null
-    let resolvePromise: ((result: TResult) => void) | null = null
-    let rejectPromise: ((error: Error) => void) | null = null
+    const { promise: resultPromise, resolve: resolveResult, reject: rejectResult } = Promise.withResolvers<TResult>()
 
-    const resultPromise = new Promise<TResult>((resolve, reject) => {
-      resolvePromise = resolve
-      rejectPromise = reject
-    })
-
-    unsubscribe = await this.#storage.subscribeToJob(id, async (status) => {
+    const unsubscribe = await this.#storage.subscribeToJob(id, async (status) => {
       if (status === 'completed') {
         const result = await this.getResult(id)
-        if (result !== null && resolvePromise) {
-          resolvePromise(result)
+        if (result !== null) {
+          resolveResult(result)
         }
       } else if (status === 'failed') {
         const error = await this.#storage.getError(id)
         const errorMessage = error ? error.toString() : 'Job failed'
-        if (rejectPromise) {
-          rejectPromise(new JobFailedError(id, errorMessage))
-        }
+        rejectResult(new JobFailedError(id, errorMessage))
       }
     })
+
+    let timeoutId: ReturnType<typeof setTimeout> | undefined
 
     try {
       // Now enqueue
       const enqueueResult = await this.enqueue(id, payload, options)
 
+      // If already completed, return cached result immediately
       if (enqueueResult.status === 'completed') {
         return enqueueResult.result
       }
 
-      // If duplicate, check if already completed
-      if (enqueueResult.status === 'duplicate') {
-        if (enqueueResult.existingState === 'completed') {
-          const result = await this.getResult(id)
-          if (result !== null) {
-            return result
-          }
-        } else if (enqueueResult.existingState === 'failed') {
-          const error = await this.#storage.getError(id)
-          const errorMessage = error ? error.toString() : 'Job failed'
-          throw new JobFailedError(id, errorMessage)
-        }
-        // Otherwise wait for completion
+      // If duplicate and already failed, throw immediately
+      if (enqueueResult.status === 'duplicate' && enqueueResult.existingState === 'failed') {
+        const error = await this.#storage.getError(id)
+        const errorMessage = error ? error.toString() : 'Job failed'
+        throw new JobFailedError(id, errorMessage)
       }
 
       // Wait for result with timeout
-      const timeoutPromise = new Promise<never>((_resolve, reject) => {
-        setTimeout(() => {
-          reject(new TimeoutError(id, timeout))
-        }, timeout)
-      })
+      const { promise: timeoutPromise, reject: rejectTimeout } = Promise.withResolvers<never>()
+      timeoutId = setTimeout(() => {
+        rejectTimeout(new TimeoutError(id, timeout))
+      }, timeout)
 
       return await Promise.race([resultPromise, timeoutPromise])
     } finally {
-      if (unsubscribe) {
-        await unsubscribe()
+      if (timeoutId !== undefined) {
+        clearTimeout(timeoutId)
       }
+      await unsubscribe()
     }
   }
 

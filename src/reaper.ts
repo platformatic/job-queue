@@ -3,6 +3,7 @@ import type { Storage } from './storage/types.ts'
 import type { Serde } from './serde/index.ts'
 import type { QueueMessage } from './types.ts'
 import { createJsonSerde } from './serde/index.ts'
+import { parseState } from './utils/state.ts'
 
 interface ReaperConfig<TPayload> {
   storage: Storage
@@ -14,18 +15,6 @@ interface ReaperConfig<TPayload> {
 interface ReaperEvents {
   error: [error: Error]
   stalled: [id: string]
-}
-
-/**
- * Parse job state string into components
- */
-function parseState (state: string): { status: string, timestamp: number, workerId?: string } {
-  const parts = state.split(':')
-  return {
-    status: parts[0],
-    timestamp: parseInt(parts[1], 10),
-    workerId: parts[2]
-  }
 }
 
 /**
