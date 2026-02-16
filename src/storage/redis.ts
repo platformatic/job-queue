@@ -114,7 +114,7 @@ export class RedisStorage implements Storage {
   }
 
   async #loadScripts (): Promise<void> {
-    const scriptsDir = join(__dirname, '..', 'scripts')
+    const scriptsDir = join(__dirname, '..', '..', 'redis-scripts')
 
     const enqueueScript = readFileSync(join(scriptsDir, 'enqueue.lua'), 'utf8')
     const completeScript = readFileSync(join(scriptsDir, 'complete.lua'), 'utf8')
