@@ -3,6 +3,7 @@ import assert from 'node:assert'
 import { setTimeout as sleep } from 'node:timers/promises'
 import { shouldRunRedisTests, createRedisStorage } from './fixtures/redis.ts'
 import { RedisStorage } from '../src/storage/redis.ts'
+import { promisifyCallback, waitForCallbacks } from './helpers/events.ts'
 
 // Skip all tests if REDIS_URL is not set
 const skipTests = !shouldRunRedisTests()
@@ -223,19 +224,17 @@ describe('RedisStorage', { skip: skipTests }, () => {
 
   describe('notifications', () => {
     it('should notify on job completion', async () => {
-      let notifiedStatus: string | null = null
-
-      const unsubscribe = await storage.subscribeToJob('job-1', (status) => {
-        notifiedStatus = status
-      })
+      const { value, unsubscribe } = await promisifyCallback<string>((handler) =>
+        storage.subscribeToJob('job-1', handler)
+      )
 
       // Small delay to ensure subscription is active
       await sleep(50)
 
       await storage.notifyJobComplete('job-1', 'completed')
 
-      // Wait for notification
-      await sleep(50)
+      // Wait for notification via promise
+      const notifiedStatus = await value
 
       assert.strictEqual(notifiedStatus, 'completed')
 
@@ -243,17 +242,15 @@ describe('RedisStorage', { skip: skipTests }, () => {
     })
 
     it('should notify on job failure', async () => {
-      let notifiedStatus: string | null = null
-
-      const unsubscribe = await storage.subscribeToJob('job-1', (status) => {
-        notifiedStatus = status
-      })
+      const { value, unsubscribe } = await promisifyCallback<string>((handler) =>
+        storage.subscribeToJob('job-1', handler)
+      )
 
       await sleep(50)
 
       await storage.notifyJobComplete('job-1', 'failed')
 
-      await sleep(50)
+      const notifiedStatus = await value
 
       assert.strictEqual(notifiedStatus, 'failed')
 
@@ -264,9 +261,11 @@ describe('RedisStorage', { skip: skipTests }, () => {
   describe('events', () => {
     it('should emit events on state changes', async () => {
       const events: Array<{ id: string, event: string }> = []
+      const { callback, promise: eventsReceived } = waitForCallbacks(2)
 
       const unsubscribe = await storage.subscribeToEvents((id, event) => {
         events.push({ id, event })
+        callback()
       })
 
       await sleep(50)
@@ -274,7 +273,7 @@ describe('RedisStorage', { skip: skipTests }, () => {
       await storage.publishEvent('job-1', 'processing')
       await storage.publishEvent('job-1', 'completed')
 
-      await sleep(50)
+      await eventsReceived
 
       assert.deepStrictEqual(events, [
         { id: 'job-1', event: 'processing' },
@@ -286,16 +285,18 @@ describe('RedisStorage', { skip: skipTests }, () => {
 
     it('should emit queued event on enqueue', async () => {
       const events: Array<{ id: string, event: string }> = []
+      const { callback, promise: eventReceived } = waitForCallbacks(1)
 
       const unsubscribe = await storage.subscribeToEvents((id, event) => {
         events.push({ id, event })
+        callback()
       })
 
       await sleep(50)
 
       await storage.enqueue('job-1', Buffer.from('test'), Date.now())
 
-      await sleep(50)
+      await eventReceived
 
       assert.deepStrictEqual(events, [{ id: 'job-1', event: 'queued' }])
 
@@ -312,16 +313,16 @@ describe('RedisStorage', { skip: skipTests }, () => {
       await storage.dequeue('worker-1', 1)
       await storage.setJobState('job-1', 'processing:123:worker-1')
 
-      let notified = false
-      const unsubscribe = await storage.subscribeToJob('job-1', () => {
-        notified = true
-      })
+      const { value: notificationReceived, unsubscribe } = await promisifyCallback<string>((handler) =>
+        storage.subscribeToJob('job-1', handler)
+      )
 
       await sleep(50)
 
       await storage.completeJob('job-1', message, 'worker-1', result, 60000)
 
-      await sleep(50)
+      // Wait for notification
+      await notificationReceived
 
       // Verify state
       const state = await storage.getJobState('job-1')
@@ -335,9 +336,6 @@ describe('RedisStorage', { skip: skipTests }, () => {
       const processing = await storage.getProcessingJobs('worker-1')
       assert.strictEqual(processing.length, 0)
 
-      // Verify notification
-      assert.strictEqual(notified, true)
-
       await unsubscribe()
     })
 
@@ -349,16 +347,16 @@ describe('RedisStorage', { skip: skipTests }, () => {
       await storage.dequeue('worker-1', 1)
       await storage.setJobState('job-1', 'processing:123:worker-1')
 
-      let notifiedStatus: string | null = null
-      const unsubscribe = await storage.subscribeToJob('job-1', (status) => {
-        notifiedStatus = status
-      })
+      const { value: notificationReceived, unsubscribe } = await promisifyCallback<string>((handler) =>
+        storage.subscribeToJob('job-1', handler)
+      )
 
       await sleep(50)
 
       await storage.failJob('job-1', message, 'worker-1', error, 60000)
 
-      await sleep(50)
+      // Wait for notification
+      const notifiedStatus = await notificationReceived
 
       // Verify state
       const state = await storage.getJobState('job-1')

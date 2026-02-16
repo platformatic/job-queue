@@ -3,6 +3,7 @@ import assert from 'node:assert'
 import { setTimeout as sleep } from 'node:timers/promises'
 import { createFileStorage } from './fixtures/file.ts'
 import { FileStorage } from '../src/storage/file.ts'
+import { promisifyCallback, waitForCallbacks } from './helpers/events.ts'
 
 describe('FileStorage', () => {
   let storage: FileStorage
@@ -230,17 +231,13 @@ describe('FileStorage', () => {
 
   describe('notifications', () => {
     it('should notify on job completion', async () => {
-      let notifiedStatus: string | null = null
-
-      const unsubscribe = await storage.subscribeToJob('job-1', (status) => {
-        notifiedStatus = status
-      })
-
-      await sleep(50)
+      const { value, unsubscribe } = await promisifyCallback<string>((handler) =>
+        storage.subscribeToJob('job-1', handler)
+      )
 
       await storage.notifyJobComplete('job-1', 'completed')
 
-      await sleep(50)
+      const notifiedStatus = await value
 
       assert.strictEqual(notifiedStatus, 'completed')
 
@@ -248,17 +245,13 @@ describe('FileStorage', () => {
     })
 
     it('should notify on job failure', async () => {
-      let notifiedStatus: string | null = null
-
-      const unsubscribe = await storage.subscribeToJob('job-1', (status) => {
-        notifiedStatus = status
-      })
-
-      await sleep(50)
+      const { value, unsubscribe } = await promisifyCallback<string>((handler) =>
+        storage.subscribeToJob('job-1', handler)
+      )
 
       await storage.notifyJobComplete('job-1', 'failed')
 
-      await sleep(50)
+      const notifiedStatus = await value
 
       assert.strictEqual(notifiedStatus, 'failed')
 
@@ -309,16 +302,14 @@ describe('FileStorage', () => {
       await storage.dequeue('worker-1', 1)
       await storage.setJobState('job-1', 'processing:123:worker-1')
 
-      let notified = false
-      const unsubscribe = await storage.subscribeToJob('job-1', () => {
-        notified = true
-      })
-
-      await sleep(50)
+      const { value: notificationReceived, unsubscribe } = await promisifyCallback<string>((handler) =>
+        storage.subscribeToJob('job-1', handler)
+      )
 
       await storage.completeJob('job-1', message, 'worker-1', result, 60000)
 
-      await sleep(50)
+      // Wait for notification
+      await notificationReceived
 
       // Verify state
       const state = await storage.getJobState('job-1')
@@ -332,9 +323,6 @@ describe('FileStorage', () => {
       const processing = await storage.getProcessingJobs('worker-1')
       assert.strictEqual(processing.length, 0)
 
-      // Verify notification
-      assert.strictEqual(notified, true)
-
       await unsubscribe()
     })
 
@@ -346,16 +334,14 @@ describe('FileStorage', () => {
       await storage.dequeue('worker-1', 1)
       await storage.setJobState('job-1', 'processing:123:worker-1')
 
-      let notifiedStatus: string | null = null
-      const unsubscribe = await storage.subscribeToJob('job-1', (status) => {
-        notifiedStatus = status
-      })
-
-      await sleep(50)
+      const { value: notificationReceived, unsubscribe } = await promisifyCallback<string>((handler) =>
+        storage.subscribeToJob('job-1', handler)
+      )
 
       await storage.failJob('job-1', message, 'worker-1', error, 60000)
 
-      await sleep(50)
+      // Wait for notification
+      const notifiedStatus = await notificationReceived
 
       // Verify state
       const state = await storage.getJobState('job-1')

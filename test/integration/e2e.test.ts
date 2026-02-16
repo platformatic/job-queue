@@ -1,7 +1,6 @@
 import { describe, it, beforeEach, afterEach } from 'node:test'
 import assert from 'node:assert'
 import { setTimeout as sleep } from 'node:timers/promises'
-import { once } from 'node:events'
 import { mkdtemp, rm } from 'node:fs/promises'
 import { join } from 'node:path'
 import { tmpdir } from 'node:os'
@@ -12,6 +11,7 @@ import { FileStorage } from '../../src/storage/file.ts'
 import { RedisStorage } from '../../src/storage/redis.ts'
 import type { Storage } from '../../src/storage/types.ts'
 import type { Job } from '../../src/types.ts'
+import { once, waitForEvents, createLatch } from '../helpers/events.ts'
 
 interface TestPayload {
   value: number
@@ -107,6 +107,9 @@ for (const { name, factory } of getStorageFactories()) {
           return result
         })
 
+        // Set up wait BEFORE starting to ensure listener is registered
+        const allCompleted = waitForEvents(queue, 'completed', 3)
+
         await queue.start()
 
         // Enqueue multiple jobs
@@ -114,8 +117,8 @@ for (const { name, factory } of getStorageFactories()) {
         await queue.enqueue('job-2', { value: 20 })
         await queue.enqueue('job-3', { value: 30 })
 
-        // Wait for processing
-        await sleep(200)
+        // Wait for all jobs to complete
+        await allCompleted
 
         assert.strictEqual(results.length, 3)
         assert.deepStrictEqual(results.map(r => r.computed).sort(), [20, 40, 60])
@@ -152,6 +155,8 @@ for (const { name, factory } of getStorageFactories()) {
       it('should distribute work across workers', async () => {
         const worker1Results: string[] = []
         const worker2Results: string[] = []
+        let completedCount = 0
+        const allCompleted = createLatch()
 
         const queue1 = new Queue<TestPayload, TestResult>({
           storage,
@@ -179,6 +184,14 @@ for (const { name, factory } of getStorageFactories()) {
           return { computed: job.payload.value * 2, workerId: 'worker-2' }
         })
 
+        // Track completed events from both queues
+        const onCompleted = () => {
+          completedCount++
+          if (completedCount === 10) allCompleted.resolve()
+        }
+        queue1.on('completed', onCompleted)
+        queue2.on('completed', onCompleted)
+
         await queue1.start()
         await queue2.start()
 
@@ -188,7 +201,7 @@ for (const { name, factory } of getStorageFactories()) {
         }
 
         // Wait for all jobs to be processed
-        await sleep(500)
+        await allCompleted.promise
 
         // Both workers should have processed some jobs
         const totalProcessed = worker1Results.length + worker2Results.length
@@ -223,6 +236,9 @@ for (const { name, factory } of getStorageFactories()) {
           return { computed: job.payload.value * 2, workerId: 'consumer-1' }
         })
 
+        // Set up wait BEFORE starting to ensure listener is registered
+        const allProcessed = waitForEvents(consumer, 'completed', 2)
+
         await producer.start()
         await consumer.start()
 
@@ -234,7 +250,7 @@ for (const { name, factory } of getStorageFactories()) {
         assert.strictEqual(result2.status, 'queued')
 
         // Wait for consumer to process
-        await sleep(200)
+        await allProcessed
 
         assert.deepStrictEqual(processedJobs.sort(), ['job-1', 'job-2'])
 
@@ -327,9 +343,12 @@ for (const { name, factory } of getStorageFactories()) {
         const cancelResult = await queue.cancel('job-1')
         assert.strictEqual(cancelResult.status, 'cancelled')
 
+        // Set up wait BEFORE starting to ensure listener is registered
+        const jobCompleted = once(queue, 'completed')
+
         // Now start processing
         await queue.start()
-        await sleep(200)
+        await jobCompleted
 
         // Only job-2 should be processed
         assert.deepStrictEqual(processedJobs, ['job-2'])
@@ -376,6 +395,9 @@ for (const { name, factory } of getStorageFactories()) {
           checkInterval: 50
         })
 
+        // Set up wait BEFORE starting to ensure listener is registered
+        const jobRecovered = once(recoveryQueue, 'completed')
+
         await stallingQueue.start()
         await recoveryQueue.start()
         await reaper.start()
@@ -384,7 +406,7 @@ for (const { name, factory } of getStorageFactories()) {
         await stallingQueue.enqueue('job-1', { value: 42 })
 
         // Wait for reaper to detect and recover the stalled job
-        await sleep(500)
+        await jobRecovered
 
         // The recovery worker should have processed the job
         assert.ok(processedJobs.includes('job-1'), 'Job should have been recovered')
@@ -412,6 +434,9 @@ for (const { name, factory } of getStorageFactories()) {
           return { computed: job.payload.value * 2, workerId: 'worker-1' }
         })
 
+        // Set up wait BEFORE starting to ensure listener is registered
+        const allProcessed = waitForEvents(queue, 'completed', jobCount)
+
         await queue.start()
 
         // Enqueue jobs sequentially to avoid race conditions
@@ -420,7 +445,7 @@ for (const { name, factory } of getStorageFactories()) {
         }
 
         // Wait for all to be processed
-        await sleep(1000)
+        await allProcessed
 
         assert.strictEqual(processedJobs.size, jobCount)
 
@@ -431,6 +456,8 @@ for (const { name, factory } of getStorageFactories()) {
     describe('deduplication end-to-end', () => {
       it('should deduplicate sequential enqueue requests', async () => {
         let processCount = 0
+        const jobStarted = createLatch()
+        const jobCanComplete = createLatch()
 
         const queue = new Queue<TestPayload, TestResult>({
           storage,
@@ -441,7 +468,8 @@ for (const { name, factory } of getStorageFactories()) {
 
         queue.execute(async (job: Job<TestPayload>) => {
           processCount++
-          await sleep(50) // Ensure we can detect duplicates
+          jobStarted.resolve()
+          await jobCanComplete.promise // Wait for test to allow completion
           return { computed: job.payload.value * 2, workerId: 'worker-1' }
         })
 
@@ -449,11 +477,16 @@ for (const { name, factory } of getStorageFactories()) {
 
         // Enqueue same job multiple times sequentially
         const result1 = await queue.enqueue('same-job', { value: 1 })
+
+        // Wait for processing to start to ensure deduplication check happens while processing
+        await jobStarted.promise
+
         const result2 = await queue.enqueue('same-job', { value: 2 })
         const result3 = await queue.enqueue('same-job', { value: 3 })
 
-        // Wait for processing
-        await sleep(200)
+        // Let job complete
+        jobCanComplete.resolve()
+        await once(queue, 'completed')
 
         // First should be queued, rest are duplicates
         assert.strictEqual(result1.status, 'queued')
@@ -497,6 +530,8 @@ for (const { name, factory } of getStorageFactories()) {
     describe('graceful shutdown', () => {
       it('should complete in-flight jobs on stop', async () => {
         let jobCompleted = false
+        const jobStarted = createLatch()
+        const jobCanComplete = createLatch()
 
         const queue = new Queue<TestPayload, TestResult>({
           storage,
@@ -506,7 +541,8 @@ for (const { name, factory } of getStorageFactories()) {
         })
 
         queue.execute(async (job: Job<TestPayload>) => {
-          await sleep(100) // Job takes some time
+          jobStarted.resolve()
+          await jobCanComplete.promise // Wait for test to allow completion
           jobCompleted = true
           return { computed: job.payload.value * 2, workerId: 'worker-1' }
         })
@@ -516,8 +552,11 @@ for (const { name, factory } of getStorageFactories()) {
         // Enqueue a job
         await queue.enqueue('job-1', { value: 50 })
 
-        // Wait a bit for processing to start
-        await sleep(50)
+        // Wait for processing to start
+        await jobStarted.promise
+
+        // Let the job complete before stopping
+        jobCanComplete.resolve()
 
         // Stop the queue - should wait for in-flight job
         await queue.stop()
