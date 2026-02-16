@@ -219,6 +219,10 @@ export class MemoryStorage implements Storage {
     return stored.data
   }
 
+  async setBlockingConcurrency (_concurrency: number): Promise<void> {
+    // No-op for memory storage (no blocking operations)
+  }
+
   async registerWorker (workerId: string, ttlMs: number): Promise<void> {
     this.#workers.set(workerId, {
       expiresAt: Date.now() + ttlMs

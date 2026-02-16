@@ -262,6 +262,7 @@ Redis URL: ${redisUrl}
       if (msg.type === 'done') resolve()
     })
   })
+  await consumerWorker.terminate()
 
   // Cleanup
   const cleanupStorage = new RedisStorage({ url: redisUrl, keyPrefix })

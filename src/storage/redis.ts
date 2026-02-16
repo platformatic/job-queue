@@ -79,11 +79,8 @@ export class RedisStorage implements Storage {
     this.#client = new Redis(this.#url)
     this.#subscriber = new Redis(this.#url)
 
-    // Create pool of blocking clients for concurrent BLMOVE operations
-    const poolSize = 10
-    for (let i = 0; i < poolSize; i++) {
-      this.#blockingClients.push(new Redis(this.#url))
-    }
+    // Create one blocking client by default (more added via setBlockingConcurrency)
+    this.#blockingClients.push(new Redis(this.#url))
 
     // Load Lua scripts
     await this.#loadScripts()
@@ -118,6 +115,16 @@ export class RedisStorage implements Storage {
     this.#eventEmitter.removeAllListeners()
     this.#notifyEmitter.removeAllListeners()
     this.#eventSubscription = false
+  }
+
+  async setBlockingConcurrency (concurrency: number): Promise<void> {
+    const needed = concurrency - this.#blockingClients.length
+    if (needed <= 0) return
+
+    // Add more blocking clients to match concurrency
+    for (let i = 0; i < needed; i++) {
+      this.#blockingClients.push(new Redis(this.#url))
+    }
   }
 
   async #loadScripts (): Promise<void> {

@@ -407,6 +407,10 @@ export class FileStorage implements Storage {
     }
   }
 
+  async setBlockingConcurrency (_concurrency: number): Promise<void> {
+    // No-op for file storage (no blocking operations)
+  }
+
   async registerWorker (workerId: string, ttlMs: number): Promise<void> {
     const filePath = join(this.#workersPath, `${workerId}.worker`)
     const expiresAt = Date.now() + ttlMs
