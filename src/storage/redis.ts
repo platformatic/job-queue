@@ -27,11 +27,13 @@ export class RedisStorage implements Storage {
   #url: string
   #keyPrefix: string
   #client: Redis | null = null
+  #blockingClients: Redis[] = [] // Pool of blocking clients for BLMOVE
   #subscriber: Redis | null = null
   #scriptSHAs: ScriptSHAs | null = null
   #eventEmitter = new EventEmitter({ captureRejections: true })
   #notifyEmitter = new EventEmitter({ captureRejections: true })
   #eventSubscription: boolean = false
+  #blockingClientIndex = 0
 
   constructor (config: RedisStorageConfig = {}) {
     this.#url = config.url ?? process.env.REDIS_URL ?? 'redis://localhost:6379'
@@ -77,6 +79,12 @@ export class RedisStorage implements Storage {
     this.#client = new Redis(this.#url)
     this.#subscriber = new Redis(this.#url)
 
+    // Create pool of blocking clients for concurrent BLMOVE operations
+    const poolSize = 10
+    for (let i = 0; i < poolSize; i++) {
+      this.#blockingClients.push(new Redis(this.#url))
+    }
+
     // Load Lua scripts
     await this.#loadScripts()
 
@@ -95,6 +103,12 @@ export class RedisStorage implements Storage {
       this.#subscriber.disconnect()
       this.#subscriber = null
     }
+
+    // Disconnect all blocking clients
+    for (const client of this.#blockingClients) {
+      client.disconnect()
+    }
+    this.#blockingClients = []
 
     if (this.#client) {
       this.#client.disconnect()
@@ -126,16 +140,27 @@ export class RedisStorage implements Storage {
     this.#scriptSHAs = { enqueue, complete, fail, retry, cancel }
   }
 
+  #notifyChannelPrefix (): string {
+    return `${this.#keyPrefix}notify:`
+  }
+
+  #eventsChannel (): string {
+    return `${this.#keyPrefix}events`
+  }
+
   #handlePubSubMessage (channel: string, message: string): void {
-    // Job notification (job:notify:jobId)
-    if (channel.startsWith('job:notify:')) {
-      const jobId = channel.substring(11)
+    const notifyPrefix = this.#notifyChannelPrefix()
+    const eventsChannel = this.#eventsChannel()
+
+    // Job notification (prefix:notify:jobId)
+    if (channel.startsWith(notifyPrefix)) {
+      const jobId = channel.substring(notifyPrefix.length)
       this.#notifyEmitter.emit(`notify:${jobId}`, message as 'completed' | 'failed')
       return
     }
 
-    // Job events (job:events)
-    if (channel === 'job:events') {
+    // Job events (prefix:events)
+    if (channel === eventsChannel) {
       const [id, event] = message.split(':')
       this.#eventEmitter.emit('event', id, event)
     }
@@ -152,12 +177,22 @@ export class RedisStorage implements Storage {
       message,
       state
     )
+
+    // If this is a new job (not duplicate), publish the queued event
+    if (result === null) {
+      await this.publishEvent(id, 'queued')
+    }
+
     return result as string | null
   }
 
   async dequeue (workerId: string, timeout: number): Promise<Buffer | null> {
     // BLMOVE: blocking move from queue to processing queue
-    const result = await this.#client!.blmove(
+    // Use round-robin from blocking client pool to enable concurrent dequeues
+    const clientIndex = this.#blockingClientIndex++ % this.#blockingClients.length
+    const blockingClient = this.#blockingClients[clientIndex]
+
+    const result = await blockingClient.blmove(
       this.#queueKey(),
       this.#processingKey(workerId),
       'LEFT',
@@ -241,9 +276,10 @@ export class RedisStorage implements Storage {
   }
 
   async unregisterWorker (workerId: string): Promise<void> {
-    await this.#client!.hdel(this.#workersKey(), workerId)
+    if (!this.#client) return
+    await this.#client.hdel(this.#workersKey(), workerId)
     // Also clear the processing queue
-    await this.#client!.del(this.#processingKey(workerId))
+    await this.#client.del(this.#processingKey(workerId))
   }
 
   async getWorkers (): Promise<string[]> {
@@ -264,16 +300,18 @@ export class RedisStorage implements Storage {
     this.#notifyEmitter.on(eventName, handler)
 
     // Subscribe to the job notification channel
-    await this.#subscriber!.subscribe(`job:notify:${id}`)
+    const channel = `${this.#notifyChannelPrefix()}${id}`
+    await this.#subscriber!.subscribe(channel)
 
     return async () => {
       this.#notifyEmitter.off(eventName, handler)
-      await this.#subscriber!.unsubscribe(`job:notify:${id}`)
+      await this.#subscriber!.unsubscribe(channel)
     }
   }
 
   async notifyJobComplete (id: string, status: 'completed' | 'failed'): Promise<void> {
-    await this.#client!.publish(`job:notify:${id}`, status)
+    const channel = `${this.#notifyChannelPrefix()}${id}`
+    await this.#client!.publish(channel, status)
   }
 
   async subscribeToEvents (
@@ -282,7 +320,7 @@ export class RedisStorage implements Storage {
     this.#eventEmitter.on('event', handler)
 
     if (!this.#eventSubscription) {
-      await this.#subscriber!.subscribe('job:events')
+      await this.#subscriber!.subscribe(this.#eventsChannel())
       this.#eventSubscription = true
     }
 
@@ -292,7 +330,7 @@ export class RedisStorage implements Storage {
   }
 
   async publishEvent (id: string, event: string): Promise<void> {
-    await this.#client!.publish('job:events', `${id}:${event}`)
+    await this.#client!.publish(this.#eventsChannel(), `${id}:${event}`)
   }
 
   async completeJob (
@@ -317,6 +355,10 @@ export class RedisStorage implements Storage {
       result,
       resultTtlMs.toString()
     )
+
+    // Notify subscribers and publish event
+    await this.notifyJobComplete(id, 'completed')
+    await this.publishEvent(id, 'completed')
   }
 
   async failJob (
@@ -341,6 +383,10 @@ export class RedisStorage implements Storage {
       error,
       errorTtlMs.toString()
     )
+
+    // Notify subscribers and publish event
+    await this.notifyJobComplete(id, 'failed')
+    await this.publishEvent(id, 'failed')
   }
 
   async retryJob (
@@ -393,9 +439,14 @@ export class RedisStorage implements Storage {
    * Clear all data (useful for testing)
    */
   async clear (): Promise<void> {
-    const keys = await this.#client!.keys(`${this.#keyPrefix}*`)
+    // If not connected, nothing to clear
+    if (!this.#client) {
+      return
+    }
+
+    const keys = await this.#client.keys(`${this.#keyPrefix}*`)
     if (keys.length > 0) {
-      await this.#client!.del(...keys)
+      await this.#client.del(...keys)
     }
   }
 }

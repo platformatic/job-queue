@@ -65,6 +65,33 @@ describe('RedisStorage', { skip: skipTests }, () => {
       assert.deepStrictEqual(d2, msg2)
       assert.deepStrictEqual(d3, msg3)
     })
+
+    it('should allow other operations while dequeue is blocking', async () => {
+      // Start multiple concurrent dequeues that will block
+      const dequeuePromises = [
+        storage.dequeue('worker-1', 2),
+        storage.dequeue('worker-2', 2),
+        storage.dequeue('worker-3', 2)
+      ]
+
+      // Wait a bit for dequeues to start blocking
+      await sleep(50)
+
+      // These operations should NOT be blocked by the dequeues
+      await storage.setJobState('test-job', 'queued:123')
+      const state = await storage.getJobState('test-job')
+      assert.strictEqual(state, 'queued:123')
+
+      // Enqueue a job so one dequeue returns
+      const msg = Buffer.from('test')
+      await storage.enqueue('job-1', msg, Date.now())
+
+      // One dequeue should return the job
+      const results = await Promise.all(dequeuePromises)
+      const gotJob = results.filter(r => r !== null)
+      assert.strictEqual(gotJob.length, 1)
+      assert.deepStrictEqual(gotJob[0], msg)
+    })
   })
 
   describe('job state', () => {
