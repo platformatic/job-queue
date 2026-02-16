@@ -1,7 +1,7 @@
 import { describe, it, beforeEach, afterEach } from 'node:test'
 import assert from 'node:assert'
-import { setTimeout as sleep } from 'node:timers/promises'
 import { Queue, MemoryStorage, type Job } from '../src/index.ts'
+import { createLatch } from './helpers/events.ts'
 
 describe('Request/Response', () => {
   let storage: MemoryStorage
@@ -112,14 +112,14 @@ describe('Request/Response', () => {
   describe('duplicate job handling', () => {
     it('should wait for in-progress job to complete', async () => {
       let callCount = 0
-      let resolveJob: (() => void) | null = null
-      const jobStarted = new Promise<void>(resolve => { resolveJob = resolve })
+      const jobStarted = createLatch()
+      const jobCanComplete = createLatch()
 
       queue.execute(async (job: Job<{ value: number }>) => {
         callCount++
-        resolveJob!()
-        // Wait a bit to simulate work
-        await sleep(50)
+        jobStarted.resolve()
+        // Wait for test to signal job can complete
+        await jobCanComplete.promise
         return { result: job.payload.value * 2 }
       })
 
@@ -129,10 +129,13 @@ describe('Request/Response', () => {
       const promise1 = queue.enqueueAndWait('job-1', { value: 21 }, { timeout: 5000 })
 
       // Wait for job to actually start processing
-      await jobStarted
+      await jobStarted.promise
 
       // Start second request with same ID while first is processing
       const promise2 = queue.enqueueAndWait('job-1', { value: 999 }, { timeout: 5000 })
+
+      // Now let the job complete
+      jobCanComplete.resolve()
 
       const [result1, result2] = await Promise.all([promise1, promise2])
 

@@ -1,8 +1,8 @@
 import { describe, it, beforeEach, afterEach } from 'node:test'
 import assert from 'node:assert'
 import { setTimeout as sleep } from 'node:timers/promises'
-import { once } from 'node:events'
 import { Queue, Reaper, MemoryStorage, type Job } from '../src/index.ts'
+import { once, waitForEvents } from './helpers/events.ts'
 
 describe('Reaper', () => {
   let storage: MemoryStorage
@@ -95,8 +95,8 @@ describe('Reaper', () => {
       // Wait for first processing attempt
       await firstJobStarted
 
-      // Wait for stall detection and requeue (reaper timeout 100ms + some buffer)
-      await sleep(200)
+      // Wait for stall detection
+      await once(reaper, 'stalled')
 
       // Job should be reprocessed and complete
       const result = await resultPromise
@@ -242,11 +242,14 @@ describe('Reaper', () => {
         stalledJobs.push(id)
       })
 
+      // Set up wait BEFORE starting reaper to ensure listener is registered
+      const stallDetected = waitForEvents(reaper, 'stalled', 1)
+
       // Start reaper - should detect the stalled job on startup check
       await reaper.start()
 
       // Wait for detection
-      await sleep(150)
+      await stallDetected
 
       assert.strictEqual(stalledJobs.length, 1)
       assert.strictEqual(stalledJobs[0], 'stalled-job')
@@ -285,10 +288,13 @@ describe('Reaper', () => {
         stalledJobs.push(id)
       })
 
+      // Set up wait BEFORE starting reaper to ensure listener is registered
+      const stallsDetected = waitForEvents(reaper, 'stalled', 2)
+
       await reaper.start()
 
       // Wait for both jobs to be detected
-      await sleep(150)
+      await stallsDetected
 
       assert.strictEqual(stalledJobs.length, 2)
       assert.ok(stalledJobs.includes('stalled-job-1'))

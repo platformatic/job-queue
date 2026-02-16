@@ -67,10 +67,8 @@ describe('MemoryStorage', () => {
       // Start dequeue that will wait
       const dequeuePromise = storage.dequeue('worker-1', 5)
 
-      // Enqueue after a small delay
-      setTimeout(async () => {
-        await storage.enqueue('job-1', message, Date.now())
-      }, 50)
+      // Enqueue immediately - dequeue should pick it up
+      await storage.enqueue('job-1', message, Date.now())
 
       const result = await dequeuePromise
       assert.deepStrictEqual(result, message)

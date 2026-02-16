@@ -4,6 +4,7 @@ import { setTimeout as sleep } from 'node:timers/promises'
 import { Queue } from '../src/queue.ts'
 import { MemoryStorage } from '../src/storage/memory.ts'
 import type { Job } from '../src/types.ts'
+import { createLatch, once } from './helpers/events.ts'
 
 describe('Deduplication', () => {
   let storage: MemoryStorage
@@ -52,10 +53,8 @@ describe('Deduplication', () => {
 
   describe('while processing', () => {
     it('should reject duplicate job while original is processing', async () => {
-      let handlerStarted: () => void
-      const waitForHandler = new Promise<void>(resolve => {
-        handlerStarted = resolve
-      })
+      const handlerStarted = createLatch()
+      const jobCanComplete = createLatch()
 
       const slowStorage = new MemoryStorage()
       const slowQueue = new Queue<{ value: number }, { result: number }>({
@@ -65,8 +64,8 @@ describe('Deduplication', () => {
       })
 
       slowQueue.execute(async (job: Job<{ value: number }>) => {
-        handlerStarted!()
-        await sleep(100)
+        handlerStarted.resolve()
+        await jobCanComplete.promise
         return { result: job.payload.value * 2 }
       })
 
@@ -77,7 +76,7 @@ describe('Deduplication', () => {
       assert.strictEqual(result1.status, 'queued')
 
       // Wait for handler to start processing
-      await waitForHandler
+      await handlerStarted.promise
 
       // Now try to enqueue same job ID while it's processing
       const result2 = await slowQueue.enqueue('job-1', { value: 99 })
@@ -86,8 +85,9 @@ describe('Deduplication', () => {
         assert.strictEqual(result2.existingState, 'processing')
       }
 
-      // Wait for job to complete
-      await sleep(150)
+      // Let job complete and wait for completion event
+      jobCanComplete.resolve()
+      await once(slowQueue, 'completed')
 
       await slowQueue.stop()
     })
@@ -142,8 +142,8 @@ describe('Deduplication', () => {
       // Enqueue and wait for failure
       await failingQueue.enqueue('job-1', { value: 42 })
 
-      // Wait for the job to fail (maxRetries defaults to 3)
-      await sleep(200)
+      // Wait for the job to fail
+      await once(failingQueue, 'failed')
 
       // Enqueue same job ID - should see failed status as duplicate
       const result2 = await failingQueue.enqueue('job-1', { value: 99 })
