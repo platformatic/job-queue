@@ -234,6 +234,15 @@ interface Storage {
   // ═══════════════════════════════════════════════════════════════════
 
   /**
+   * Ensure storage has enough resources for the given concurrency level.
+   * For Redis, this creates blocking clients for concurrent BLMOVE operations.
+   * Called by Consumer.start() before starting worker loops.
+   *
+   * @param concurrency - Number of concurrent workers that will call dequeue()
+   */
+  setBlockingConcurrency(concurrency: number): Promise<void>;
+
+  /**
    * Register a worker as active.
    * Should set a TTL so crashed workers are automatically removed.
    */
