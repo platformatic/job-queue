@@ -2,7 +2,6 @@ import { describe, it, beforeEach, afterEach } from 'node:test'
 import assert from 'node:assert'
 import { setTimeout as sleep } from 'node:timers/promises'
 import { MemoryStorage } from '../src/storage/memory.ts'
-import { createLatch } from './helpers/events.ts'
 
 describe('MemoryStorage', () => {
   let storage: MemoryStorage

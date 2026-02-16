@@ -4,7 +4,7 @@ import type { EventEmitter } from 'node:events'
 /**
  * Wait for N events of a given type
  */
-export async function waitForEvents(
+export async function waitForEvents (
   emitter: EventEmitter,
   event: string,
   count: number
@@ -25,10 +25,10 @@ export async function waitForEvents(
 /**
  * Create a controlled latch (manually resolvable promise)
  */
-export function createLatch(): { promise: Promise<void>; resolve: () => void } {
+export function createLatch (): { promise: Promise<void>; resolve: () => void } {
   let resolve!: () => void
-  const promise = new Promise<void>((r) => {
-    resolve = r
+  const promise = new Promise<void>((_resolve) => {
+    resolve = _resolve
   })
   return { promise, resolve }
 }
@@ -37,19 +37,19 @@ export function createLatch(): { promise: Promise<void>; resolve: () => void } {
  * Wrap a callback subscription in a promise (for notification tests)
  * This allows waiting for a notification without polling with sleep()
  */
-export function promisifyCallback<T>(
+export function promisifyCallback<T> (
   subscribe: (handler: (value: T) => void) => Promise<() => Promise<void>>
 ): Promise<{ value: Promise<T>; unsubscribe: () => Promise<void> }> {
-  return new Promise((resolveSetup) => {
+  return new Promise((resolve) => {
     let resolveValue!: (value: T) => void
-    const value = new Promise<T>((r) => {
-      resolveValue = r
+    const value = new Promise<T>((_resolve) => {
+      resolveValue = _resolve
     })
 
     subscribe((v: T) => {
       resolveValue(v)
     }).then((unsubscribe) => {
-      resolveSetup({ value, unsubscribe })
+      resolve({ value, unsubscribe })
     })
   })
 }
@@ -57,14 +57,14 @@ export function promisifyCallback<T>(
 /**
  * Create a promise that resolves when a callback is called N times
  */
-export function waitForCallbacks(count: number): {
+export function waitForCallbacks (count: number): {
   callback: () => void
   promise: Promise<void>
 } {
   let received = 0
   let resolve!: () => void
-  const promise = new Promise<void>((r) => {
-    resolve = r
+  const promise = new Promise<void>((_resolve) => {
+    resolve = _resolve
   })
   const callback = () => {
     received++

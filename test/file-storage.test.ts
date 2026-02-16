@@ -3,7 +3,7 @@ import assert from 'node:assert'
 import { setTimeout as sleep } from 'node:timers/promises'
 import { createFileStorage } from './fixtures/file.ts'
 import { FileStorage } from '../src/storage/file.ts'
-import { promisifyCallback, waitForCallbacks } from './helpers/events.ts'
+import { promisifyCallback } from './helpers/events.ts'
 
 describe('FileStorage', () => {
   let storage: FileStorage
