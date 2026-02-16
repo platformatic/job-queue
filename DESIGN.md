@@ -234,6 +234,15 @@ interface Storage {
   // ═══════════════════════════════════════════════════════════════════
 
   /**
+   * Ensure storage has enough resources for the given concurrency level.
+   * For Redis, this creates blocking clients for concurrent BLMOVE operations.
+   * Called by Consumer.start() before starting worker loops.
+   *
+   * @param concurrency - Number of concurrent workers that will call dequeue()
+   */
+  setBlockingConcurrency(concurrency: number): Promise<void>;
+
+  /**
    * Register a worker as active.
    * Should set a TTL so crashed workers are automatically removed.
    */
@@ -599,7 +608,19 @@ interface Serde<T> {
 }
 ```
 
-The library ships with a JSON serde (default). Custom serdes can be provided for binary formats like MessagePack, CBOR, or Protocol Buffers:
+The library ships with a JSON serde (default) which can be accessed directly if needed:
+
+```typescript
+import { JsonSerde, createJsonSerde } from '@platformatic/job-queue';
+
+// Using the class directly
+const serde = new JsonSerde<MyType>();
+
+// Using the factory function
+const serde = createJsonSerde<MyType>();
+```
+
+Custom serdes can be provided for binary formats like MessagePack, CBOR, or Protocol Buffers:
 
 ```typescript
 import { type Serde } from '@platformatic/job-queue';
@@ -712,11 +733,15 @@ class Queue<TPayload, TResult = void> {
   // Consumer
   execute(handler: JobHandler<TPayload, TResult>): void;
 
-  // Events
+  // Events (from internal Consumer)
   on(event: 'error', handler: (error: Error) => void): void;
   on(event: 'completed', handler: (id: string, result: TResult) => void): void;
   on(event: 'failed', handler: (id: string, error: Error) => void): void;
-  on(event: 'cancelled', handler: (id: string) => void): void;
+}
+
+// Note: 'stalled' events are emitted by the Reaper class, not Queue
+class Reaper<TPayload> extends EventEmitter {
+  on(event: 'error', handler: (error: Error) => void): void;
   on(event: 'stalled', handler: (id: string) => void): void;
 }
 ```
@@ -1139,12 +1164,6 @@ src/
 ├── producer.ts              # Producer functionality
 ├── consumer.ts              # Consumer functionality
 ├── reaper.ts                # Stalled job recovery
-├── scripts/                 # Lua scripts
-│   ├── enqueue.lua
-│   ├── complete.lua
-│   ├── fail.lua
-│   ├── cancel.lua
-│   └── recoverStalled.lua
 ├── types.ts                 # Type definitions
 ├── errors.ts                # Custom errors
 ├── serde/
@@ -1152,24 +1171,28 @@ src/
 ├── storage/
 │   ├── index.ts             # Storage interface export
 │   ├── types.ts             # Storage interface definition
-│   ├── redis.ts             # RedisStorage implementation
-│   ├── redis-scripts.ts     # Lua scripts for atomic operations
+│   ├── redis.ts             # RedisStorage implementation (includes Lua scripts)
 │   ├── memory.ts            # MemoryStorage implementation
 │   └── file.ts              # FileStorage implementation
+├── types/
+│   └── fast-write-atomic.d.ts  # Type declarations for fast-write-atomic
 └── utils/
     └── id.ts                # ID generation helpers
 
 test/
-├── queue.test.ts
-├── producer.test.ts
-├── consumer.test.ts
-├── deduplication.test.ts
-├── request-response.test.ts
-├── serde.test.ts            # Verifies custom serde (msgpack) works
+├── queue.test.ts            # Queue lifecycle and processing tests
+├── deduplication.test.ts    # Deduplication behavior tests
+├── request-response.test.ts # enqueueAndWait tests
+├── reaper.test.ts           # Stalled job recovery tests
 ├── memory-storage.test.ts   # MemoryStorage tests
 ├── file-storage.test.ts     # FileStorage tests
-└── fixtures/
-    └── redis.ts             # Test Redis setup
+├── redis-storage.test.ts    # RedisStorage tests
+├── helpers/
+│   └── events.ts            # Event-driven test utilities
+├── fixtures/
+│   └── redis.ts             # Test Redis setup
+└── integration/
+    └── e2e.test.ts          # End-to-end integration tests
 ```
 
 ## TypeScript Configuration
@@ -1434,9 +1457,12 @@ switch (result.status) {
 ```typescript
 import {
   Queue,
-  DuplicateError,
   TimeoutError,
-  MaxRetriesError
+  MaxRetriesError,
+  JobFailedError,
+  JobNotFoundError,
+  JobCancelledError,
+  StorageError
 } from '@platformatic/job-queue';
 
 queue.on('failed', (id, error) => {
@@ -1452,7 +1478,16 @@ try {
   if (error instanceof TimeoutError) {
     // Job may still complete later - check status
     const status = await queue.getStatus('job-1');
+  } else if (error instanceof JobFailedError) {
+    // Job failed after max retries
+    console.error('Job failed:', error.originalError);
   }
+}
+
+// Duplicates are handled via return value, not exceptions
+const result = await queue.enqueue('job-1', payload);
+if (result.status === 'duplicate') {
+  console.log('Job already exists with state:', result.existingState);
 }
 ```
 
