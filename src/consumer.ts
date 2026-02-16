@@ -75,9 +75,6 @@ export class Consumer<TPayload, TResult> extends EventEmitter<ConsumerEvents<TRe
     this.#running = true
     this.#abortController = new AbortController()
 
-    // Configure storage for our concurrency level
-    await this.#storage.setBlockingConcurrency(this.#concurrency)
-
     // Register worker
     await this.#storage.registerWorker(this.#workerId, this.#visibilityTimeout * 2)
 
