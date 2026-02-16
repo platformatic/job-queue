@@ -26,6 +26,9 @@
     "test:memory": "node --test test/*.test.ts",
     "test:redis": "REDIS_URL=${REDIS_URL:-redis://localhost:6379} node --test test/*.test.ts",
     "test:valkey": "REDIS_URL=${REDIS_URL:-redis://localhost:6380} node --test test/*.test.ts",
+    "bench": "node benchmark/request-response.ts",
+    "bench:redis": "REDIS_URL=${REDIS_URL:-redis://localhost:6379} node benchmark/request-response.ts",
+    "bench:valkey": "REDIS_URL=${REDIS_URL:-redis://localhost:6380} node benchmark/request-response.ts",
     "typecheck": "tsc --noEmit"
   },
   "engines": {

@@ -387,6 +387,34 @@ import {
 } from '@platformatic/job-queue'
 ```
 
+## Benchmarks
+
+Run request/response benchmarks over Redis:
+
+```bash
+# With Redis
+npm run bench:redis
+
+# With Valkey
+npm run bench:valkey
+```
+
+Sample output:
+
+```
+Single Request Baseline (100 requests, concurrency=1)
+──────────────────────────────────────────────────
+  Requests:    100
+  Throughput:  312.50 req/s
+  Latency:
+    min:       2.15 ms
+    p50:       3.02 ms
+    p95:       4.21 ms
+    p99:       5.43 ms
+    max:       6.12 ms
+    avg:       3.20 ms
+```
+
 ## Testing
 
 Run tests against different backends:
