@@ -10,6 +10,15 @@ export class JobQueueError extends Error {
     this.code = code
     Error.captureStackTrace(this, this.constructor)
   }
+
+  toJSON (): Record<string, unknown> {
+    return {
+      name: this.name,
+      message: this.message,
+      code: this.code,
+      stack: this.stack
+    }
+  }
 }
 
 /**
@@ -22,6 +31,13 @@ export class TimeoutError extends JobQueueError {
     super(`Job '${jobId}' timed out after ${timeout}ms`, 'TIMEOUT')
     this.name = 'TimeoutError'
     this.jobId = jobId
+  }
+
+  toJSON (): Record<string, unknown> {
+    return {
+      ...super.toJSON(),
+      jobId: this.jobId
+    }
   }
 }
 
@@ -40,6 +56,19 @@ export class MaxRetriesError extends JobQueueError {
     this.attempts = attempts
     this.lastError = lastError
   }
+
+  toJSON (): Record<string, unknown> {
+    return {
+      ...super.toJSON(),
+      jobId: this.jobId,
+      attempts: this.attempts,
+      lastError: {
+        name: this.lastError.name,
+        message: this.lastError.message,
+        stack: this.lastError.stack
+      }
+    }
+  }
 }
 
 /**
@@ -53,18 +82,37 @@ export class JobNotFoundError extends JobQueueError {
     this.name = 'JobNotFoundError'
     this.jobId = jobId
   }
+
+  toJSON (): Record<string, unknown> {
+    return {
+      ...super.toJSON(),
+      jobId: this.jobId
+    }
+  }
 }
 
 /**
  * Storage operation failed
  */
 export class StorageError extends JobQueueError {
-  cause?: Error
+  override cause?: Error
 
   constructor (message: string, cause?: Error) {
     super(message, 'STORAGE_ERROR')
     this.name = 'StorageError'
     this.cause = cause
+  }
+
+  toJSON (): Record<string, unknown> {
+    const json: Record<string, unknown> = { ...super.toJSON() }
+    if (this.cause) {
+      json.cause = {
+        name: this.cause.name,
+        message: this.cause.message,
+        stack: this.cause.stack
+      }
+    }
+    return json
   }
 }
 
@@ -78,6 +126,13 @@ export class JobCancelledError extends JobQueueError {
     super(`Job '${jobId}' was cancelled`, 'JOB_CANCELLED')
     this.name = 'JobCancelledError'
     this.jobId = jobId
+  }
+
+  toJSON (): Record<string, unknown> {
+    return {
+      ...super.toJSON(),
+      jobId: this.jobId
+    }
   }
 }
 
@@ -93,5 +148,13 @@ export class JobFailedError extends JobQueueError {
     this.name = 'JobFailedError'
     this.jobId = jobId
     this.originalError = errorMessage
+  }
+
+  toJSON (): Record<string, unknown> {
+    return {
+      ...super.toJSON(),
+      jobId: this.jobId,
+      originalError: this.originalError
+    }
   }
 }
