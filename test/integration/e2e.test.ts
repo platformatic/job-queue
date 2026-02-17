@@ -391,8 +391,7 @@ for (const { name, factory } of getStorageFactories()) {
         // Reaper to detect stalled jobs
         const reaper = new Reaper({
           storage,
-          visibilityTimeout: 100,
-          checkInterval: 50
+          visibilityTimeout: 100
         })
 
         // Set up wait BEFORE starting to ensure listener is registered
