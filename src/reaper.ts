@@ -3,29 +3,17 @@ import type { Storage } from './storage/types.ts'
 import type { Serde } from './serde/index.ts'
 import type { QueueMessage } from './types.ts'
 import { createJsonSerde } from './serde/index.ts'
+import { parseState } from './utils/state.ts'
 
 interface ReaperConfig<TPayload> {
   storage: Storage
   payloadSerde?: Serde<TPayload>
   visibilityTimeout?: number
-  checkInterval?: number
 }
 
 interface ReaperEvents {
   error: [error: Error]
   stalled: [id: string]
-}
-
-/**
- * Parse job state string into components
- */
-function parseState (state: string): { status: string, timestamp: number, workerId?: string } {
-  const parts = state.split(':')
-  return {
-    status: parts[0],
-    timestamp: parseInt(parts[1], 10),
-    workerId: parts[2]
-  }
 }
 
 /**
@@ -38,11 +26,9 @@ export class Reaper<TPayload> extends EventEmitter<ReaperEvents> {
   #storage: Storage
   #payloadSerde: Serde<TPayload>
   #visibilityTimeout: number
-  #checkInterval: number
 
   #running = false
   #unsubscribe: (() => Promise<void>) | null = null
-  #checkIntervalTimer: ReturnType<typeof setInterval> | null = null
   #processingTimers: Map<string, ReturnType<typeof setTimeout>> = new Map()
 
   constructor (config: ReaperConfig<TPayload>) {
@@ -50,7 +36,6 @@ export class Reaper<TPayload> extends EventEmitter<ReaperEvents> {
     this.#storage = config.storage
     this.#payloadSerde = config.payloadSerde ?? createJsonSerde<TPayload>()
     this.#visibilityTimeout = config.visibilityTimeout ?? 30000
-    this.#checkInterval = config.checkInterval ?? 60000
   }
 
   /**
@@ -66,15 +51,8 @@ export class Reaper<TPayload> extends EventEmitter<ReaperEvents> {
       this.#handleEvent(id, event)
     })
 
-    // Do an initial check for stalled jobs
+    // Do an initial scan for any jobs that were processing before we started
     await this.#checkStalledJobs()
-
-    // Start periodic check interval
-    this.#checkIntervalTimer = setInterval(() => {
-      this.#checkStalledJobs().catch((err) => {
-        this.emit('error', err)
-      })
-    }, this.#checkInterval)
   }
 
   /**
@@ -84,12 +62,6 @@ export class Reaper<TPayload> extends EventEmitter<ReaperEvents> {
     if (!this.#running) return
 
     this.#running = false
-
-    // Clear check interval
-    if (this.#checkIntervalTimer) {
-      clearInterval(this.#checkIntervalTimer)
-      this.#checkIntervalTimer = null
-    }
 
     // Clear all processing timers
     for (const timer of this.#processingTimers.values()) {

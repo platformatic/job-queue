@@ -111,15 +111,6 @@ export interface Storage {
   // ═══════════════════════════════════════════════════════════════════
 
   /**
-   * Ensure storage has enough resources for the given concurrency level.
-   * For Redis, this creates blocking clients for concurrent BLMOVE operations.
-   * Called by Consumer.start() before starting worker loops.
-   *
-   * @param concurrency - Number of concurrent workers that will call dequeue()
-   */
-  setBlockingConcurrency (concurrency: number): Promise<void>
-
-  /**
    * Register a worker as active.
    * Should set a TTL so crashed workers are automatically removed.
    */
@@ -160,14 +151,14 @@ export interface Storage {
    */
   subscribeToJob (
     id: string,
-    handler: (status: 'completed' | 'failed') => void
+    handler: (status: 'completed' | 'failed' | 'failing') => void
   ): Promise<() => Promise<void>>
 
   /**
    * Publish a job completion/failure notification.
-   * Called by worker after job finishes.
+   * Called by worker after job finishes or is retried.
    */
-  notifyJobComplete (id: string, status: 'completed' | 'failed'): Promise<void>
+  notifyJobComplete (id: string, status: 'completed' | 'failed' | 'failing'): Promise<void>
 
   // ═══════════════════════════════════════════════════════════════════
   // EVENTS (for monitoring/reaper)

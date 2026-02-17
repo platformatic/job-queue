@@ -4,9 +4,9 @@ import type { Serde } from './serde/index.ts'
 /**
  * Message stored in the queue
  */
-export interface QueueMessage<T> {
+export interface QueueMessage<TPayload> {
   id: string
-  payload: T
+  payload: TPayload
   createdAt: number
   attempts: number
   maxAttempts: number
@@ -19,6 +19,15 @@ export interface QueueMessage<T> {
 export type MessageState = 'queued' | 'processing' | 'failing' | 'completed' | 'failed'
 
 /**
+ * Serialized error information
+ */
+export interface SerializedError {
+  message: string
+  code?: string
+  stack?: string
+}
+
+/**
  * Job status with metadata
  */
 export interface MessageStatus<TResult = unknown> {
@@ -27,7 +36,7 @@ export interface MessageStatus<TResult = unknown> {
   createdAt: number
   attempts: number
   result?: TResult
-  error?: string
+  error?: SerializedError
 }
 
 /**
@@ -109,20 +118,22 @@ export interface QueueConfig<TPayload, TResult> {
   /** TTL for processing queue keys in ms (default: 604800000 = 7 days) */
   processingQueueTTL?: number
 
-  /** Result retention in ms (default: 3600000 = 1 hour) */
+  /** TTL for stored results and errors in ms (default: 3600000 = 1 hour) */
   resultTTL?: number
-
-  /** How long to keep completed/failed jobs in ms (default: 86400000 = 24h) */
-  jobsTTL?: number
 }
 
 /**
  * Queue events (tuple format for EventEmitter)
  */
 export interface QueueEvents<TResult> {
+  started: []
+  stopped: []
   error: [error: Error]
+  enqueued: [id: string]
   completed: [id: string, result: TResult]
   failed: [id: string, error: Error]
+  failing: [id: string, error: Error, attempt: number]
+  requeued: [id: string]
   cancelled: [id: string]
   stalled: [id: string]
 }

@@ -407,10 +407,6 @@ export class FileStorage implements Storage {
     }
   }
 
-  async setBlockingConcurrency (_concurrency: number): Promise<void> {
-    // No-op for file storage (no blocking operations)
-  }
-
   async registerWorker (workerId: string, ttlMs: number): Promise<void> {
     const filePath = join(this.#workersPath, `${workerId}.worker`)
     const expiresAt = Date.now() + ttlMs
@@ -480,7 +476,7 @@ export class FileStorage implements Storage {
 
   async subscribeToJob (
     id: string,
-    handler: (status: 'completed' | 'failed') => void
+    handler: (status: 'completed' | 'failed' | 'failing') => void
   ): Promise<() => Promise<void>> {
     const eventName = `notify:${id}`
     this.#notifyEmitter.on(eventName, handler)
@@ -490,7 +486,7 @@ export class FileStorage implements Storage {
     }
   }
 
-  async notifyJobComplete (id: string, status: 'completed' | 'failed'): Promise<void> {
+  async notifyJobComplete (id: string, status: 'completed' | 'failed' | 'failing'): Promise<void> {
     // Write a notification file that will be picked up by the watcher
     const notifyFile = join(this.#notifyPath, `${id}-${Date.now()}.notify`)
     await writeFileAtomic(notifyFile, `${id}:${status}`)
@@ -576,6 +572,9 @@ export class FileStorage implements Storage {
 
     // Move from processing queue to main queue
     await this.requeue(id, message, workerId)
+
+    // Publish notification
+    await this.notifyJobComplete(id, 'failing')
 
     // Publish event
     this.#eventEmitter.emit('event', id, 'failing')

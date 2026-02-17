@@ -274,14 +274,14 @@ interface Storage {
    */
   subscribeToJob(
     id: string,
-    handler: (status: 'completed' | 'failed') => void
+    handler: (status: 'completed' | 'failed' | 'failing') => void
   ): Promise<() => Promise<void>>;
 
   /**
-   * Publish a job completion/failure notification.
-   * Called by worker after job finishes.
+   * Publish a job completion/failure/retry notification.
+   * Called by worker after job finishes or is retried.
    */
-  notifyJobComplete(id: string, status: 'completed' | 'failed'): Promise<void>;
+  notifyJobComplete(id: string, status: 'completed' | 'failed' | 'failing'): Promise<void>;
 
   // ═══════════════════════════════════════════════════════════════════
   // EVENTS (for monitoring/reaper)
@@ -527,14 +527,14 @@ private async tryAcquireNextJob(workerId: string): Promise<Buffer | null> {
 ```typescript
 async subscribeToJob(
   id: string,
-  handler: (status: 'completed' | 'failed') => void
+  handler: (status: 'completed' | 'failed' | 'failing') => void
 ): Promise<() => Promise<void>> {
   const notifyPath = this.notifyPath(id);
 
   const watcher = fs.watch(path.dirname(notifyPath), (event, filename) => {
     if (filename === path.basename(notifyPath)) {
       fs.readFile(notifyPath, 'utf8').then(status => {
-        handler(status as 'completed' | 'failed');
+        handler(status as 'completed' | 'failed' | 'failing');
       });
     }
   });
@@ -542,7 +542,7 @@ async subscribeToJob(
   return async () => { watcher.close(); };
 }
 
-async notifyJobComplete(id: string, status: 'completed' | 'failed'): Promise<void> {
+async notifyJobComplete(id: string, status: 'completed' | 'failed' | 'failing'): Promise<void> {
   await writeFileAtomic.promise(this.notifyPath(id), Buffer.from(status));
 }
 ```
@@ -599,7 +599,19 @@ interface Serde<T> {
 }
 ```
 
-The library ships with a JSON serde (default). Custom serdes can be provided for binary formats like MessagePack, CBOR, or Protocol Buffers:
+The library ships with a JSON serde (default) which can be accessed directly if needed:
+
+```typescript
+import { JsonSerde, createJsonSerde } from '@platformatic/job-queue';
+
+// Using the class directly
+const serde = new JsonSerde<MyType>();
+
+// Using the factory function
+const serde = createJsonSerde<MyType>();
+```
+
+Custom serdes can be provided for binary formats like MessagePack, CBOR, or Protocol Buffers:
 
 ```typescript
 import { type Serde } from '@platformatic/job-queue';
@@ -642,10 +654,7 @@ interface QueueConfig<TPayload, TResult> {
   processingQueueTTL?: number;         // TTL for processing queue keys in ms (default: 604800000 = 7 days)
 
   // Result cache options
-  resultTTL?: number;                  // Result retention in ms (default: 3600000 = 1 hour)
-
-  // Jobs cleanup
-  jobsTTL?: number;                    // How long to keep completed/failed jobs (default: 86400000 = 24h)
+  resultTTL?: number;                  // TTL for stored results and errors in ms (default: 3600000 = 1 hour)
 }
 ```
 
@@ -712,11 +721,15 @@ class Queue<TPayload, TResult = void> {
   // Consumer
   execute(handler: JobHandler<TPayload, TResult>): void;
 
-  // Events
+  // Events (from internal Consumer)
   on(event: 'error', handler: (error: Error) => void): void;
   on(event: 'completed', handler: (id: string, result: TResult) => void): void;
   on(event: 'failed', handler: (id: string, error: Error) => void): void;
-  on(event: 'cancelled', handler: (id: string) => void): void;
+}
+
+// Note: 'stalled' events are emitted by the Reaper class, not Queue
+class Reaper<TPayload> extends EventEmitter {
+  on(event: 'error', handler: (error: Error) => void): void;
   on(event: 'stalled', handler: (id: string) => void): void;
 }
 ```
@@ -1088,21 +1101,9 @@ await queue.enqueue(contentId(job), job);
 
 ### Jobs Hash Cleanup
 
-The jobs hash entries have a TTL enforced by a cleanup process. In newer Redis 7.4+ / Valkey 8+, per-field TTL on hashes (`HEXPIRE`) can be used instead.
+The jobs hash stores job states indefinitely. Results and errors are stored separately with TTL (via `resultTTL`). In newer Redis 7.4+ / Valkey 8+, per-field TTL on hashes (`HEXPIRE`) could be used for automatic job state cleanup.
 
-```
-every {jobsTTL / 10}:
-    │
-    ▼
-┌─────────────────────────────────────────────┐
-│ HSCAN {prefix}:jobs                          │
-│ For each entry:                              │
-│   Parse timestamp from value                 │
-│   If (now - timestamp) > jobsTTL             │
-│     AND state in (completed, failed)         │
-│     HDEL {prefix}:jobs {id}                  │
-└─────────────────────────────────────────────┘
-```
+**Note:** Job state entries persist to allow duplicate detection. Implement application-level cleanup if needed.
 
 ### Race Condition Handling
 
@@ -1139,12 +1140,6 @@ src/
 ├── producer.ts              # Producer functionality
 ├── consumer.ts              # Consumer functionality
 ├── reaper.ts                # Stalled job recovery
-├── scripts/                 # Lua scripts
-│   ├── enqueue.lua
-│   ├── complete.lua
-│   ├── fail.lua
-│   ├── cancel.lua
-│   └── recoverStalled.lua
 ├── types.ts                 # Type definitions
 ├── errors.ts                # Custom errors
 ├── serde/
@@ -1152,24 +1147,28 @@ src/
 ├── storage/
 │   ├── index.ts             # Storage interface export
 │   ├── types.ts             # Storage interface definition
-│   ├── redis.ts             # RedisStorage implementation
-│   ├── redis-scripts.ts     # Lua scripts for atomic operations
+│   ├── redis.ts             # RedisStorage implementation (includes Lua scripts)
 │   ├── memory.ts            # MemoryStorage implementation
 │   └── file.ts              # FileStorage implementation
+├── types/
+│   └── fast-write-atomic.d.ts  # Type declarations for fast-write-atomic
 └── utils/
     └── id.ts                # ID generation helpers
 
 test/
-├── queue.test.ts
-├── producer.test.ts
-├── consumer.test.ts
-├── deduplication.test.ts
-├── request-response.test.ts
-├── serde.test.ts            # Verifies custom serde (msgpack) works
+├── queue.test.ts            # Queue lifecycle and processing tests
+├── deduplication.test.ts    # Deduplication behavior tests
+├── request-response.test.ts # enqueueAndWait tests
+├── reaper.test.ts           # Stalled job recovery tests
 ├── memory-storage.test.ts   # MemoryStorage tests
 ├── file-storage.test.ts     # FileStorage tests
-└── fixtures/
-    └── redis.ts             # Test Redis setup
+├── redis-storage.test.ts    # RedisStorage tests
+├── helpers/
+│   └── events.ts            # Event-driven test utilities
+├── fixtures/
+│   └── redis.ts             # Test Redis setup
+└── integration/
+    └── e2e.test.ts          # End-to-end integration tests
 ```
 
 ## TypeScript Configuration
@@ -1434,9 +1433,12 @@ switch (result.status) {
 ```typescript
 import {
   Queue,
-  DuplicateError,
   TimeoutError,
-  MaxRetriesError
+  MaxRetriesError,
+  JobFailedError,
+  JobNotFoundError,
+  JobCancelledError,
+  StorageError
 } from '@platformatic/job-queue';
 
 queue.on('failed', (id, error) => {
@@ -1452,7 +1454,16 @@ try {
   if (error instanceof TimeoutError) {
     // Job may still complete later - check status
     const status = await queue.getStatus('job-1');
+  } else if (error instanceof JobFailedError) {
+    // Job failed after max retries
+    console.error('Job failed:', error.originalError);
   }
+}
+
+// Duplicates are handled via return value, not exceptions
+const result = await queue.enqueue('job-1', payload);
+if (result.status === 'duplicate') {
+  console.log('Job already exists with state:', result.existingState);
 }
 ```
 

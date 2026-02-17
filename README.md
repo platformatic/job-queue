@@ -160,13 +160,27 @@ const status = await queue.getStatus('job-123')
 //   createdAt: 1234567890,
 //   attempts: 1,
 //   result?: { ... },
-//   error?: 'Error message'
+//   error?: { message: 'Error message', code?: 'ERROR_CODE', stack?: '...' }
 // }
 ```
 
 #### Events
 
 ```typescript
+// Lifecycle events
+queue.on('started', () => {
+  console.log('Queue started')
+})
+
+queue.on('stopped', () => {
+  console.log('Queue stopped')
+})
+
+// Job events
+queue.on('enqueued', (id) => {
+  console.log(`Job ${id} was enqueued`)
+})
+
 queue.on('completed', (id, result) => {
   console.log(`Job ${id} completed:`, result)
 })
@@ -175,6 +189,19 @@ queue.on('failed', (id, error) => {
   console.log(`Job ${id} failed:`, error.message)
 })
 
+queue.on('failing', (id, error, attempt) => {
+  console.log(`Job ${id} failed attempt ${attempt}, will retry:`, error.message)
+})
+
+queue.on('requeued', (id) => {
+  console.log(`Job ${id} was returned to queue (e.g., during graceful shutdown)`)
+})
+
+queue.on('cancelled', (id) => {
+  console.log(`Job ${id} was cancelled`)
+})
+
+// Error events
 queue.on('error', (error) => {
   console.error('Queue error:', error)
 })
@@ -238,8 +265,7 @@ import { Reaper } from '@platformatic/job-queue'
 
 const reaper = new Reaper({
   storage,
-  visibilityTimeout: 30000,  // Same as your queue's visibilityTimeout
-  checkInterval: 60000       // How often to check for stalled jobs
+  visibilityTimeout: 30000  // Same as your queue's visibilityTimeout
 })
 
 await reaper.start()
@@ -251,6 +277,8 @@ reaper.on('stalled', (id) => {
 // On shutdown
 await reaper.stop()
 ```
+
+The Reaper uses event-based monitoring: it subscribes to job state changes and sets per-job timers. An initial scan at startup catches any jobs that were processing before the Reaper started.
 
 ### Custom Serialization
 

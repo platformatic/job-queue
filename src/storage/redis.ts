@@ -27,13 +27,12 @@ export class RedisStorage implements Storage {
   #url: string
   #keyPrefix: string
   #client: Redis | null = null
-  #blockingClients: Redis[] = [] // Pool of blocking clients for BLMOVE
+  #blockingClient: Redis | null = null // Single blocking client for BLMOVE
   #subscriber: Redis | null = null
   #scriptSHAs: ScriptSHAs | null = null
   #eventEmitter = new EventEmitter({ captureRejections: true })
   #notifyEmitter = new EventEmitter({ captureRejections: true })
   #eventSubscription: boolean = false
-  #blockingClientIndex = 0
 
   constructor (config: RedisStorageConfig = {}) {
     this.#url = config.url ?? process.env.REDIS_URL ?? 'redis://localhost:6379'
@@ -78,9 +77,7 @@ export class RedisStorage implements Storage {
 
     this.#client = new Redis(this.#url)
     this.#subscriber = new Redis(this.#url)
-
-    // Create one blocking client by default (more added via setBlockingConcurrency)
-    this.#blockingClients.push(new Redis(this.#url))
+    this.#blockingClient = new Redis(this.#url)
 
     // Load Lua scripts
     await this.#loadScripts()
@@ -101,11 +98,10 @@ export class RedisStorage implements Storage {
       this.#subscriber = null
     }
 
-    // Disconnect all blocking clients
-    for (const client of this.#blockingClients) {
-      client.disconnect()
+    if (this.#blockingClient) {
+      this.#blockingClient.disconnect()
+      this.#blockingClient = null
     }
-    this.#blockingClients = []
 
     if (this.#client) {
       this.#client.disconnect()
@@ -117,18 +113,8 @@ export class RedisStorage implements Storage {
     this.#eventSubscription = false
   }
 
-  async setBlockingConcurrency (concurrency: number): Promise<void> {
-    const needed = concurrency - this.#blockingClients.length
-    if (needed <= 0) return
-
-    // Add more blocking clients to match concurrency
-    for (let i = 0; i < needed; i++) {
-      this.#blockingClients.push(new Redis(this.#url))
-    }
-  }
-
   async #loadScripts (): Promise<void> {
-    const scriptsDir = join(__dirname, '..', 'scripts')
+    const scriptsDir = join(__dirname, '..', '..', 'redis-scripts')
 
     const enqueueScript = readFileSync(join(scriptsDir, 'enqueue.lua'), 'utf8')
     const completeScript = readFileSync(join(scriptsDir, 'complete.lua'), 'utf8')
@@ -195,11 +181,9 @@ export class RedisStorage implements Storage {
 
   async dequeue (workerId: string, timeout: number): Promise<Buffer | null> {
     // BLMOVE: blocking move from queue to processing queue
-    // Use round-robin from blocking client pool to enable concurrent dequeues
-    const clientIndex = this.#blockingClientIndex++ % this.#blockingClients.length
-    const blockingClient = this.#blockingClients[clientIndex]
-
-    const result = await blockingClient.blmove(
+    // A single blocking client can handle multiple concurrent BLMOVE calls -
+    // iovalkey multiplexes them and Redis queues them internally.
+    const result = await this.#blockingClient!.blmove(
       this.#queueKey(),
       this.#processingKey(workerId),
       'LEFT',
@@ -278,8 +262,7 @@ export class RedisStorage implements Storage {
   }
 
   async refreshWorker (workerId: string, ttlMs: number): Promise<void> {
-    await this.#client!.hset(this.#workersKey(), workerId, Date.now().toString())
-    await this.#client!.pexpire(this.#workersKey(), ttlMs)
+    await this.registerWorker(workerId, ttlMs)
   }
 
   async unregisterWorker (workerId: string): Promise<void> {
@@ -301,7 +284,7 @@ export class RedisStorage implements Storage {
 
   async subscribeToJob (
     id: string,
-    handler: (status: 'completed' | 'failed') => void
+    handler: (status: 'completed' | 'failed' | 'failing') => void
   ): Promise<() => Promise<void>> {
     const eventName = `notify:${id}`
     this.#notifyEmitter.on(eventName, handler)
@@ -316,7 +299,7 @@ export class RedisStorage implements Storage {
     }
   }
 
-  async notifyJobComplete (id: string, status: 'completed' | 'failed'): Promise<void> {
+  async notifyJobComplete (id: string, status: 'completed' | 'failed' | 'failing'): Promise<void> {
     const channel = `${this.#notifyChannelPrefix()}${id}`
     await this.#client!.publish(channel, status)
   }
@@ -438,6 +421,7 @@ export class RedisStorage implements Storage {
       // Fallback: just set state and push new message
       await this.setJobState(id, state)
       await this.#client!.lpush(this.#queueKey(), message)
+      await this.notifyJobComplete(id, 'failing')
       await this.publishEvent(id, 'failing')
     }
   }

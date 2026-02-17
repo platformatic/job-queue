@@ -21,6 +21,8 @@ interface ConsumerEvents<TResult> {
   error: [error: Error]
   completed: [id: string, result: TResult]
   failed: [id: string, error: Error]
+  failing: [id: string, error: Error, attempt: number]
+  requeued: [id: string]
 }
 
 /**
@@ -74,9 +76,6 @@ export class Consumer<TPayload, TResult> extends EventEmitter<ConsumerEvents<TRe
 
     this.#running = true
     this.#abortController = new AbortController()
-
-    // Configure storage for our concurrency level
-    await this.#storage.setBlockingConcurrency(this.#concurrency)
 
     // Register worker
     await this.#storage.registerWorker(this.#workerId, this.#visibilityTimeout * 2)
@@ -142,6 +141,7 @@ export class Consumer<TPayload, TResult> extends EventEmitter<ConsumerEvents<TRe
           // Put message back
           const queueMessage = this.#deserializeMessage(message)
           await this.#storage.requeue(queueMessage.id, message, this.#workerId)
+          this.emit('requeued', queueMessage.id)
           break
         }
 
@@ -221,11 +221,14 @@ export class Consumer<TPayload, TResult> extends EventEmitter<ConsumerEvents<TRe
         const serializedMessage = this.#payloadSerde.serialize(updatedMessage as unknown as TPayload)
 
         await this.#storage.retryJob(id, serializedMessage, this.#workerId, currentAttempts)
+
+        this.emit('failing', id, error, currentAttempts)
       } else {
         // Max retries exceeded - fail the job
         const maxRetriesError = new MaxRetriesError(id, currentAttempts, error)
         const serializedError = Buffer.from(JSON.stringify({
           message: error.message,
+          code: (error as Error & { code?: string }).code,
           stack: error.stack
         }))
 

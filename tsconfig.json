@@ -1,6 +1,6 @@
 {
   "compilerOptions": {
-    "target": "ES2022",
+    "target": "ES2024",
     "module": "NodeNext",
     "moduleResolution": "NodeNext",
     "strict": true,
@@ -11,7 +11,7 @@
     "isolatedModules": true,
     "verbatimModuleSyntax": true,
     "allowImportingTsExtensions": true,
-    "lib": ["ES2022"],
+    "lib": ["ES2024"],
     "types": ["node"]
   },
   "include": ["src/**/*.ts", "test/**/*.ts"],

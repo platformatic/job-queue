@@ -20,8 +20,7 @@ describe('Reaper', () => {
     })
     reaper = new Reaper({
       storage,
-      visibilityTimeout: 100,
-      checkInterval: 50
+      visibilityTimeout: 100
     })
   })
 
