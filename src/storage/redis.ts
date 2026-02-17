@@ -262,8 +262,7 @@ export class RedisStorage implements Storage {
   }
 
   async refreshWorker (workerId: string, ttlMs: number): Promise<void> {
-    await this.#client!.hset(this.#workersKey(), workerId, Date.now().toString())
-    await this.#client!.pexpire(this.#workersKey(), ttlMs)
+    await this.registerWorker(workerId, ttlMs)
   }
 
   async unregisterWorker (workerId: string): Promise<void> {

@@ -226,9 +226,7 @@ export class MemoryStorage implements Storage {
   }
 
   async refreshWorker (workerId: string, ttlMs: number): Promise<void> {
-    this.#workers.set(workerId, {
-      expiresAt: Date.now() + ttlMs
-    })
+    await this.registerWorker(workerId, ttlMs)
   }
 
   async unregisterWorker (workerId: string): Promise<void> {
