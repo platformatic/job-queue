@@ -22,6 +22,7 @@ interface ConsumerEvents<TResult> {
   completed: [id: string, result: TResult]
   failed: [id: string, error: Error]
   failing: [id: string, error: Error, attempt: number]
+  requeued: [id: string]
 }
 
 /**
@@ -140,6 +141,7 @@ export class Consumer<TPayload, TResult> extends EventEmitter<ConsumerEvents<TRe
           // Put message back
           const queueMessage = this.#deserializeMessage(message)
           await this.#storage.requeue(queueMessage.id, message, this.#workerId)
+          this.emit('requeued', queueMessage.id)
           break
         }
 
