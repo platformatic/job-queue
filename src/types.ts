@@ -4,9 +4,9 @@ import type { Serde } from './serde/index.ts'
 /**
  * Message stored in the queue
  */
-export interface QueueMessage<T> {
+export interface QueueMessage<TPayload> {
   id: string
-  payload: T
+  payload: TPayload
   createdAt: number
   attempts: number
   maxAttempts: number
