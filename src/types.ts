@@ -19,6 +19,15 @@ export interface QueueMessage<TPayload> {
 export type MessageState = 'queued' | 'processing' | 'failing' | 'completed' | 'failed'
 
 /**
+ * Serialized error information
+ */
+export interface SerializedError {
+  message: string
+  code?: string
+  stack?: string
+}
+
+/**
  * Job status with metadata
  */
 export interface MessageStatus<TResult = unknown> {
@@ -27,7 +36,7 @@ export interface MessageStatus<TResult = unknown> {
   createdAt: number
   attempts: number
   result?: TResult
-  error?: string
+  error?: SerializedError
 }
 
 /**

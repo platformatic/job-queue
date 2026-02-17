@@ -228,6 +228,7 @@ export class Consumer<TPayload, TResult> extends EventEmitter<ConsumerEvents<TRe
         const maxRetriesError = new MaxRetriesError(id, currentAttempts, error)
         const serializedError = Buffer.from(JSON.stringify({
           message: error.message,
+          code: (error as Error & { code?: string }).code,
           stack: error.stack
         }))
 

@@ -6,7 +6,8 @@ import type {
   EnqueueAndWaitOptions,
   EnqueueResult,
   CancelResult,
-  MessageStatus
+  MessageStatus,
+  SerializedError
 } from './types.ts'
 import { TimeoutError, JobFailedError } from './errors.ts'
 import { createJsonSerde } from './serde/index.ts'
@@ -199,9 +200,14 @@ export class Producer<TPayload, TResult> {
         messageStatus.result = result
       }
     } else if (status === 'failed') {
-      const error = await this.#storage.getError(id)
-      if (error) {
-        messageStatus.error = error.toString()
+      const errorBuffer = await this.#storage.getError(id)
+      if (errorBuffer) {
+        try {
+          messageStatus.error = JSON.parse(errorBuffer.toString()) as SerializedError
+        } catch {
+          // Fallback for non-JSON errors
+          messageStatus.error = { message: errorBuffer.toString() }
+        }
       }
     }
 
