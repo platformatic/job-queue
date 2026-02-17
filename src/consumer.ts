@@ -21,6 +21,7 @@ interface ConsumerEvents<TResult> {
   error: [error: Error]
   completed: [id: string, result: TResult]
   failed: [id: string, error: Error]
+  failing: [id: string, error: Error, attempt: number]
 }
 
 /**
@@ -218,6 +219,8 @@ export class Consumer<TPayload, TResult> extends EventEmitter<ConsumerEvents<TRe
         const serializedMessage = this.#payloadSerde.serialize(updatedMessage as unknown as TPayload)
 
         await this.#storage.retryJob(id, serializedMessage, this.#workerId, currentAttempts)
+
+        this.emit('failing', id, error, currentAttempts)
       } else {
         // Max retries exceeded - fail the job
         const maxRetriesError = new MaxRetriesError(id, currentAttempts, error)

@@ -120,9 +120,14 @@ export interface QueueConfig<TPayload, TResult> {
  * Queue events (tuple format for EventEmitter)
  */
 export interface QueueEvents<TResult> {
+  started: []
+  stopped: []
   error: [error: Error]
+  enqueued: [id: string]
   completed: [id: string, result: TResult]
   failed: [id: string, error: Error]
+  failing: [id: string, error: Error, attempt: number]
+  requeued: [id: string]
   cancelled: [id: string]
   stalled: [id: string]
 }

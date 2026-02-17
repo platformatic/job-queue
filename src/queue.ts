@@ -70,6 +70,8 @@ export class Queue<TPayload, TResult = void> extends EventEmitter<QueueEvents<TR
     if (this.#handler) {
       this.#startConsumer()
     }
+
+    this.emit('started')
   }
 
   /**
@@ -84,6 +86,8 @@ export class Queue<TPayload, TResult = void> extends EventEmitter<QueueEvents<TR
 
     await this.#storage.disconnect()
     this.#started = false
+
+    this.emit('stopped')
   }
 
   /**
@@ -167,6 +171,10 @@ export class Queue<TPayload, TResult = void> extends EventEmitter<QueueEvents<TR
 
     this.#consumer.on('failed', (id, error) => {
       this.emit('failed', id, error)
+    })
+
+    this.#consumer.on('failing', (id, error, attempt) => {
+      this.emit('failing', id, error, attempt)
     })
 
     this.#consumer.execute(this.#handler)
