@@ -2,18 +2,19 @@ import { describe, it, beforeEach, afterEach } from 'node:test'
 import assert from 'node:assert'
 import { setTimeout as sleep } from 'node:timers/promises'
 import { Queue, Reaper, RedisStorage, type Job } from '../src/index.ts'
-import { once, waitForEvents } from './helpers/events.ts'
+import { once } from './helpers/events.ts'
+import { shouldRunRedisTests } from './fixtures/redis.ts'
 
-// Skip if no Redis available
-const REDIS_URL = process.env.REDIS_URL ?? 'redis://localhost:6379'
+const skipTests = !shouldRunRedisTests()
 
-describe('Reaper Leader Election', () => {
+describe('Reaper Leader Election', { skip: skipTests }, () => {
+  const keyPrefix = `test:leader:${Date.now()}:`
   let storage: RedisStorage
   let storage2: RedisStorage
 
   beforeEach(async () => {
-    storage = new RedisStorage({ url: REDIS_URL, keyPrefix: 'test:leader:' })
-    storage2 = new RedisStorage({ url: REDIS_URL, keyPrefix: 'test:leader:' })
+    storage = new RedisStorage({ url: process.env.REDIS_URL, keyPrefix })
+    storage2 = new RedisStorage({ url: process.env.REDIS_URL, keyPrefix })
     await storage.connect()
     await storage2.connect()
     await storage.clear()
