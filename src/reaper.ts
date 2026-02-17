@@ -1,41 +1,82 @@
 import { EventEmitter } from 'node:events'
+import { randomUUID } from 'node:crypto'
 import type { Storage } from './storage/types.ts'
 import type { Serde } from './serde/index.ts'
 import type { QueueMessage } from './types.ts'
 import { createJsonSerde } from './serde/index.ts'
 import { parseState } from './utils/state.ts'
 
+interface LeaderElectionConfig {
+  enabled: boolean
+  lockTTL?: number
+  renewalInterval?: number
+  acquireRetryInterval?: number
+}
+
 interface ReaperConfig<TPayload> {
   storage: Storage
   payloadSerde?: Serde<TPayload>
   visibilityTimeout?: number
+  leaderElection?: LeaderElectionConfig
 }
 
 interface ReaperEvents {
   error: [error: Error]
   stalled: [id: string]
+  leadershipAcquired: []
+  leadershipLost: []
 }
+
+const LOCK_KEY = 'reaper:lock'
+const DEFAULT_LOCK_TTL = 30000
+const DEFAULT_RENEWAL_INTERVAL = 10000
+const DEFAULT_ACQUIRE_RETRY_INTERVAL = 5000
 
 /**
  * Reaper monitors for stalled jobs and requeues them.
  *
  * A job is considered stalled if it has been in "processing" state
  * longer than the visibility timeout.
+ *
+ * When leader election is enabled, multiple Reaper instances can run
+ * for high availability, with only one active at a time.
  */
 export class Reaper<TPayload> extends EventEmitter<ReaperEvents> {
   #storage: Storage
   #payloadSerde: Serde<TPayload>
   #visibilityTimeout: number
+  #leaderElection: LeaderElectionConfig
 
   #running = false
   #unsubscribe: (() => Promise<void>) | null = null
   #processingTimers: Map<string, ReturnType<typeof setTimeout>> = new Map()
+
+  // Leader election state
+  #reaperId: string
+  #isLeader = false
+  #leadershipTimer: ReturnType<typeof setInterval> | null = null
 
   constructor (config: ReaperConfig<TPayload>) {
     super()
     this.#storage = config.storage
     this.#payloadSerde = config.payloadSerde ?? createJsonSerde<TPayload>()
     this.#visibilityTimeout = config.visibilityTimeout ?? 30000
+    this.#leaderElection = config.leaderElection ?? { enabled: false }
+    this.#reaperId = randomUUID()
+  }
+
+  /**
+   * Get the unique identifier for this reaper instance
+   */
+  get reaperId (): string {
+    return this.#reaperId
+  }
+
+  /**
+   * Check if this reaper is currently the leader
+   */
+  get isLeader (): boolean {
+    return this.#isLeader
   }
 
   /**
@@ -46,13 +87,12 @@ export class Reaper<TPayload> extends EventEmitter<ReaperEvents> {
 
     this.#running = true
 
-    // Subscribe to job events
-    this.#unsubscribe = await this.#storage.subscribeToEvents((id, event) => {
-      this.#handleEvent(id, event)
-    })
-
-    // Do an initial scan for any jobs that were processing before we started
-    await this.#checkStalledJobs()
+    if (this.#leaderElection.enabled) {
+      await this.#startLeadershipLoop()
+    } else {
+      // No leader election, become active immediately
+      await this.#becomeActive()
+    }
   }
 
   /**
@@ -63,6 +103,39 @@ export class Reaper<TPayload> extends EventEmitter<ReaperEvents> {
 
     this.#running = false
 
+    // Stop leadership loop
+    if (this.#leadershipTimer) {
+      clearInterval(this.#leadershipTimer)
+      this.#leadershipTimer = null
+    }
+
+    // Release lock if we're leader
+    if (this.#isLeader && this.#leaderElection.enabled) {
+      await this.#releaseLeadership()
+      this.#isLeader = false
+    }
+
+    // Become inactive (cleanup)
+    await this.#becomeInactive()
+  }
+
+  /**
+   * Become active: subscribe to events and do initial scan
+   */
+  async #becomeActive (): Promise<void> {
+    // Subscribe to job events
+    this.#unsubscribe = await this.#storage.subscribeToEvents((id, event) => {
+      this.#handleEvent(id, event)
+    })
+
+    // Do an initial scan for any jobs that were processing before we started
+    await this.#checkStalledJobs()
+  }
+
+  /**
+   * Become inactive: clear timers and unsubscribe
+   */
+  async #becomeInactive (): Promise<void> {
     // Clear all processing timers
     for (const timer of this.#processingTimers.values()) {
       clearTimeout(timer)
@@ -74,6 +147,128 @@ export class Reaper<TPayload> extends EventEmitter<ReaperEvents> {
       await this.#unsubscribe()
       this.#unsubscribe = null
     }
+  }
+
+  /**
+   * Start the leadership acquisition loop
+   */
+  async #startLeadershipLoop (): Promise<void> {
+    const lockTTL = this.#leaderElection.lockTTL ?? DEFAULT_LOCK_TTL
+
+    // Try to acquire lock immediately
+    const acquired = await this.#tryAcquireLock(lockTTL)
+    if (acquired) {
+      this.#isLeader = true
+      await this.#becomeActive()
+      this.emit('leadershipAcquired')
+    }
+
+    // Start the appropriate timer based on current role
+    this.#scheduleLeadershipCheck()
+  }
+
+  /**
+   * Schedule the next leadership check (renewal or acquisition)
+   */
+  #scheduleLeadershipCheck (): void {
+    const lockTTL = this.#leaderElection.lockTTL ?? DEFAULT_LOCK_TTL
+    const renewalInterval = this.#leaderElection.renewalInterval ?? DEFAULT_RENEWAL_INTERVAL
+    const acquireRetryInterval = this.#leaderElection.acquireRetryInterval ?? DEFAULT_ACQUIRE_RETRY_INTERVAL
+
+    // Clear any existing timer
+    if (this.#leadershipTimer) {
+      clearInterval(this.#leadershipTimer)
+    }
+
+    const interval = this.#isLeader ? renewalInterval : acquireRetryInterval
+
+    this.#leadershipTimer = setInterval(async () => {
+      if (!this.#running) return
+
+      try {
+        if (this.#isLeader) {
+          // Renew lock
+          const renewed = await this.#tryRenewLock(lockTTL)
+          if (!renewed) {
+            // Lost leadership
+            await this.#transitionToFollower()
+          }
+        } else {
+          // Try to acquire lock
+          const acquired = await this.#tryAcquireLock(lockTTL)
+          if (acquired) {
+            await this.#transitionToLeader()
+          }
+        }
+      } catch (err) {
+        this.emit('error', err as Error)
+      }
+    }, interval)
+  }
+
+  /**
+   * Try to acquire the leader lock
+   */
+  async #tryAcquireLock (ttlMs: number): Promise<boolean> {
+    if (!this.#storage.acquireLeaderLock) {
+      // Storage doesn't support leader election
+      this.emit('error', new Error('Storage does not support leader election'))
+      return false
+    }
+
+    return this.#storage.acquireLeaderLock(LOCK_KEY, this.#reaperId, ttlMs)
+  }
+
+  /**
+   * Try to renew the leader lock
+   */
+  async #tryRenewLock (ttlMs: number): Promise<boolean> {
+    if (!this.#storage.renewLeaderLock) {
+      return false
+    }
+
+    return this.#storage.renewLeaderLock(LOCK_KEY, this.#reaperId, ttlMs)
+  }
+
+  /**
+   * Release the leader lock
+   */
+  async #releaseLeadership (): Promise<void> {
+    if (!this.#storage.releaseLeaderLock) {
+      return
+    }
+
+    await this.#storage.releaseLeaderLock(LOCK_KEY, this.#reaperId)
+  }
+
+  /**
+   * Transition from follower to leader
+   */
+  async #transitionToLeader (): Promise<void> {
+    this.#isLeader = true
+
+    // Become active
+    await this.#becomeActive()
+
+    // Update interval timing (leaders use renewalInterval)
+    this.#scheduleLeadershipCheck()
+
+    this.emit('leadershipAcquired')
+  }
+
+  /**
+   * Transition from leader to follower
+   */
+  async #transitionToFollower (): Promise<void> {
+    this.#isLeader = false
+
+    // Become inactive
+    await this.#becomeInactive()
+
+    // Update interval timing (followers use acquireRetryInterval)
+    this.#scheduleLeadershipCheck()
+
+    this.emit('leadershipLost')
   }
 
   /**
@@ -122,6 +317,7 @@ export class Reaper<TPayload> extends EventEmitter<ReaperEvents> {
    */
   async #checkJob (id: string): Promise<void> {
     if (!this.#running) return
+    if (this.#leaderElection.enabled && !this.#isLeader) return
 
     const state = await this.#storage.getJobState(id)
     if (!state) return
@@ -201,6 +397,7 @@ export class Reaper<TPayload> extends EventEmitter<ReaperEvents> {
    */
   async #checkStalledJobs (): Promise<void> {
     if (!this.#running) return
+    if (this.#leaderElection.enabled && !this.#isLeader) return
 
     const workers = await this.#storage.getWorkers()
 
@@ -214,6 +411,7 @@ export class Reaper<TPayload> extends EventEmitter<ReaperEvents> {
    */
   async #checkWorkerProcessingQueue (workerId: string): Promise<void> {
     if (!this.#running) return
+    if (this.#leaderElection.enabled && !this.#isLeader) return
 
     const processingJobs = await this.#storage.getProcessingJobs(workerId)
 

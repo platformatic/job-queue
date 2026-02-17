@@ -18,6 +18,8 @@ interface ScriptSHAs {
   fail: string
   retry: string
   cancel: string
+  renewLeaderLock: string
+  releaseLeaderLock: string
 }
 
 /**
@@ -72,6 +74,10 @@ export class RedisStorage implements Storage {
     return this.#key('workers')
   }
 
+  #reaperLockKey (): string {
+    return this.#key('reaper:lock')
+  }
+
   async connect (): Promise<void> {
     if (this.#client) return
 
@@ -121,16 +127,20 @@ export class RedisStorage implements Storage {
     const failScript = readFileSync(join(scriptsDir, 'fail.lua'), 'utf8')
     const retryScript = readFileSync(join(scriptsDir, 'retry.lua'), 'utf8')
     const cancelScript = readFileSync(join(scriptsDir, 'cancel.lua'), 'utf8')
+    const renewLeaderLockScript = readFileSync(join(scriptsDir, 'renew-leader-lock.lua'), 'utf8')
+    const releaseLeaderLockScript = readFileSync(join(scriptsDir, 'release-leader-lock.lua'), 'utf8')
 
-    const [enqueue, complete, fail, retry, cancel] = await Promise.all([
+    const [enqueue, complete, fail, retry, cancel, renewLeaderLock, releaseLeaderLock] = await Promise.all([
       this.#client!.script('LOAD', enqueueScript) as Promise<string>,
       this.#client!.script('LOAD', completeScript) as Promise<string>,
       this.#client!.script('LOAD', failScript) as Promise<string>,
       this.#client!.script('LOAD', retryScript) as Promise<string>,
-      this.#client!.script('LOAD', cancelScript) as Promise<string>
+      this.#client!.script('LOAD', cancelScript) as Promise<string>,
+      this.#client!.script('LOAD', renewLeaderLockScript) as Promise<string>,
+      this.#client!.script('LOAD', releaseLeaderLockScript) as Promise<string>
     ])
 
-    this.#scriptSHAs = { enqueue, complete, fail, retry, cancel }
+    this.#scriptSHAs = { enqueue, complete, fail, retry, cancel, renewLeaderLock, releaseLeaderLock }
   }
 
   #notifyChannelPrefix (): string {
@@ -439,5 +449,43 @@ export class RedisStorage implements Storage {
     if (keys.length > 0) {
       await this.#client.del(...keys)
     }
+  }
+
+  // ═══════════════════════════════════════════════════════════════════
+  // LEADER ELECTION
+  // ═══════════════════════════════════════════════════════════════════
+
+  async acquireLeaderLock (lockKey: string, ownerId: string, ttlMs: number): Promise<boolean> {
+    // SET NX PX: Set only if Not eXists, with PX milliseconds expiry
+    const result = await this.#client!.set(
+      this.#key(lockKey),
+      ownerId,
+      'PX',
+      ttlMs,
+      'NX'
+    )
+    return result === 'OK'
+  }
+
+  async renewLeaderLock (lockKey: string, ownerId: string, ttlMs: number): Promise<boolean> {
+    const result = await this.#client!.evalsha(
+      this.#scriptSHAs!.renewLeaderLock,
+      1,
+      this.#key(lockKey),
+      ownerId,
+      ttlMs.toString()
+    )
+    return result === 1
+  }
+
+  async releaseLeaderLock (lockKey: string, ownerId: string): Promise<boolean> {
+    if (!this.#client) return false
+    const result = await this.#client.evalsha(
+      this.#scriptSHAs!.releaseLeaderLock,
+      1,
+      this.#key(lockKey),
+      ownerId
+    )
+    return result === 1
   }
 }
