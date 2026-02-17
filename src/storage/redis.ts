@@ -284,7 +284,7 @@ export class RedisStorage implements Storage {
 
   async subscribeToJob (
     id: string,
-    handler: (status: 'completed' | 'failed') => void
+    handler: (status: 'completed' | 'failed' | 'failing') => void
   ): Promise<() => Promise<void>> {
     const eventName = `notify:${id}`
     this.#notifyEmitter.on(eventName, handler)
@@ -299,7 +299,7 @@ export class RedisStorage implements Storage {
     }
   }
 
-  async notifyJobComplete (id: string, status: 'completed' | 'failed'): Promise<void> {
+  async notifyJobComplete (id: string, status: 'completed' | 'failed' | 'failing'): Promise<void> {
     const channel = `${this.#notifyChannelPrefix()}${id}`
     await this.#client!.publish(channel, status)
   }
@@ -421,6 +421,7 @@ export class RedisStorage implements Storage {
       // Fallback: just set state and push new message
       await this.setJobState(id, state)
       await this.#client!.lpush(this.#queueKey(), message)
+      await this.notifyJobComplete(id, 'failing')
       await this.publishEvent(id, 'failing')
     }
   }

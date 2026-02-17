@@ -151,14 +151,14 @@ export interface Storage {
    */
   subscribeToJob (
     id: string,
-    handler: (status: 'completed' | 'failed') => void
+    handler: (status: 'completed' | 'failed' | 'failing') => void
   ): Promise<() => Promise<void>>
 
   /**
    * Publish a job completion/failure notification.
-   * Called by worker after job finishes.
+   * Called by worker after job finishes or is retried.
    */
-  notifyJobComplete (id: string, status: 'completed' | 'failed'): Promise<void>
+  notifyJobComplete (id: string, status: 'completed' | 'failed' | 'failing'): Promise<void>
 
   // ═══════════════════════════════════════════════════════════════════
   // EVENTS (for monitoring/reaper)

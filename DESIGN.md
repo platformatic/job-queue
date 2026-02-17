@@ -274,14 +274,14 @@ interface Storage {
    */
   subscribeToJob(
     id: string,
-    handler: (status: 'completed' | 'failed') => void
+    handler: (status: 'completed' | 'failed' | 'failing') => void
   ): Promise<() => Promise<void>>;
 
   /**
-   * Publish a job completion/failure notification.
-   * Called by worker after job finishes.
+   * Publish a job completion/failure/retry notification.
+   * Called by worker after job finishes or is retried.
    */
-  notifyJobComplete(id: string, status: 'completed' | 'failed'): Promise<void>;
+  notifyJobComplete(id: string, status: 'completed' | 'failed' | 'failing'): Promise<void>;
 
   // ═══════════════════════════════════════════════════════════════════
   // EVENTS (for monitoring/reaper)
@@ -527,14 +527,14 @@ private async tryAcquireNextJob(workerId: string): Promise<Buffer | null> {
 ```typescript
 async subscribeToJob(
   id: string,
-  handler: (status: 'completed' | 'failed') => void
+  handler: (status: 'completed' | 'failed' | 'failing') => void
 ): Promise<() => Promise<void>> {
   const notifyPath = this.notifyPath(id);
 
   const watcher = fs.watch(path.dirname(notifyPath), (event, filename) => {
     if (filename === path.basename(notifyPath)) {
       fs.readFile(notifyPath, 'utf8').then(status => {
-        handler(status as 'completed' | 'failed');
+        handler(status as 'completed' | 'failed' | 'failing');
       });
     }
   });
@@ -542,7 +542,7 @@ async subscribeToJob(
   return async () => { watcher.close(); };
 }
 
-async notifyJobComplete(id: string, status: 'completed' | 'failed'): Promise<void> {
+async notifyJobComplete(id: string, status: 'completed' | 'failed' | 'failing'): Promise<void> {
   await writeFileAtomic.promise(this.notifyPath(id), Buffer.from(status));
 }
 ```
@@ -654,10 +654,7 @@ interface QueueConfig<TPayload, TResult> {
   processingQueueTTL?: number;         // TTL for processing queue keys in ms (default: 604800000 = 7 days)
 
   // Result cache options
-  resultTTL?: number;                  // Result retention in ms (default: 3600000 = 1 hour)
-
-  // Jobs cleanup
-  jobsTTL?: number;                    // How long to keep completed/failed jobs (default: 86400000 = 24h)
+  resultTTL?: number;                  // TTL for stored results and errors in ms (default: 3600000 = 1 hour)
 }
 ```
 
@@ -1104,21 +1101,9 @@ await queue.enqueue(contentId(job), job);
 
 ### Jobs Hash Cleanup
 
-The jobs hash entries have a TTL enforced by a cleanup process. In newer Redis 7.4+ / Valkey 8+, per-field TTL on hashes (`HEXPIRE`) can be used instead.
+The jobs hash stores job states indefinitely. Results and errors are stored separately with TTL (via `resultTTL`). In newer Redis 7.4+ / Valkey 8+, per-field TTL on hashes (`HEXPIRE`) could be used for automatic job state cleanup.
 
-```
-every {jobsTTL / 10}:
-    │
-    ▼
-┌─────────────────────────────────────────────┐
-│ HSCAN {prefix}:jobs                          │
-│ For each entry:                              │
-│   Parse timestamp from value                 │
-│   If (now - timestamp) > jobsTTL             │
-│     AND state in (completed, failed)         │
-│     HDEL {prefix}:jobs {id}                  │
-└─────────────────────────────────────────────┘
-```
+**Note:** Job state entries persist to allow duplicate detection. Implement application-level cleanup if needed.
 
 ### Race Condition Handling
 

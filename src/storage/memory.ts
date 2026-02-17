@@ -253,7 +253,7 @@ export class MemoryStorage implements Storage {
 
   async subscribeToJob (
     id: string,
-    handler: (status: 'completed' | 'failed') => void
+    handler: (status: 'completed' | 'failed' | 'failing') => void
   ): Promise<() => Promise<void>> {
     const eventName = `notify:${id}`
     this.#notifyEmitter.on(eventName, handler)
@@ -263,7 +263,7 @@ export class MemoryStorage implements Storage {
     }
   }
 
-  async notifyJobComplete (id: string, status: 'completed' | 'failed'): Promise<void> {
+  async notifyJobComplete (id: string, status: 'completed' | 'failed' | 'failing'): Promise<void> {
     this.#notifyEmitter.emit(`notify:${id}`, status)
   }
 
@@ -344,6 +344,9 @@ export class MemoryStorage implements Storage {
 
     // Move from processing queue to main queue
     await this.requeue(id, message, workerId)
+
+    // Publish notification
+    await this.notifyJobComplete(id, 'failing')
 
     // Publish event
     this.#eventEmitter.emit('event', id, 'failing')

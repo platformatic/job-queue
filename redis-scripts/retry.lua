@@ -17,7 +17,8 @@ redis.call('LREM', KEYS[3], 1, ARGV[3])
 -- Add back to main queue (at the front for retry)
 redis.call('LPUSH', KEYS[2], ARGV[2])
 
--- Publish event
+-- Publish notifications
+redis.call('PUBLISH', 'job:notify:' .. ARGV[1], 'failing')
 redis.call('PUBLISH', 'job:events', ARGV[1] .. ':failing')
 
 return 1
