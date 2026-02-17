@@ -118,11 +118,8 @@ export interface QueueConfig<TPayload, TResult> {
   /** TTL for processing queue keys in ms (default: 604800000 = 7 days) */
   processingQueueTTL?: number
 
-  /** Result retention in ms (default: 3600000 = 1 hour) */
+  /** TTL for stored results and errors in ms (default: 3600000 = 1 hour) */
   resultTTL?: number
-
-  /** How long to keep completed/failed jobs in ms (default: 86400000 = 24h) */
-  jobsTTL?: number
 }
 
 /**
