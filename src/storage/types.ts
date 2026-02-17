@@ -180,6 +180,42 @@ export interface Storage {
   publishEvent (id: string, event: string): Promise<void>
 
   // ═══════════════════════════════════════════════════════════════════
+  // LEADER ELECTION (optional, for Reaper high availability)
+  // ═══════════════════════════════════════════════════════════════════
+
+  /**
+   * Try to acquire the reaper leader lock.
+   * Uses SET NX PX pattern for atomic acquisition.
+   *
+   * @param lockKey - The lock key name
+   * @param ownerId - Unique identifier for this reaper instance
+   * @param ttlMs - Lock TTL in milliseconds
+   * @returns true if lock was acquired, false if already held by another
+   */
+  acquireLeaderLock?(lockKey: string, ownerId: string, ttlMs: number): Promise<boolean>
+
+  /**
+   * Renew the leader lock if still owned by this reaper.
+   * Extends the TTL atomically only if the current owner matches.
+   *
+   * @param lockKey - The lock key name
+   * @param ownerId - Unique identifier for this reaper instance
+   * @param ttlMs - New TTL in milliseconds
+   * @returns true if lock was renewed, false if not owned
+   */
+  renewLeaderLock?(lockKey: string, ownerId: string, ttlMs: number): Promise<boolean>
+
+  /**
+   * Release the leader lock if owned by this reaper.
+   * Deletes the lock atomically only if the current owner matches.
+   *
+   * @param lockKey - The lock key name
+   * @param ownerId - Unique identifier for this reaper instance
+   * @returns true if lock was released, false if not owned
+   */
+  releaseLeaderLock?(lockKey: string, ownerId: string): Promise<boolean>
+
+  // ═══════════════════════════════════════════════════════════════════
   // ATOMIC OPERATIONS (Lua scripts in Redis)
   // ═══════════════════════════════════════════════════════════════════
 

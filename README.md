@@ -280,6 +280,39 @@ await reaper.stop()
 
 The Reaper uses event-based monitoring: it subscribes to job state changes and sets per-job timers. An initial scan at startup catches any jobs that were processing before the Reaper started.
 
+#### Leader Election
+
+For high availability, you can run multiple Reaper instances with leader election enabled. Only one instance will be active at a time, and if it fails, another will automatically take over.
+
+```typescript
+const reaper = new Reaper({
+  storage,
+  visibilityTimeout: 30000,
+  leaderElection: {
+    enabled: true,              // Enable leader election (default: false)
+    lockTTL: 30000,             // Lock expiry in ms (default: 30s)
+    renewalInterval: 10000,     // Renew lock every 10s (default: 1/3 of TTL)
+    acquireRetryInterval: 5000  // Followers retry every 5s (default: 5s)
+  }
+})
+
+reaper.on('leadershipAcquired', () => {
+  console.log('This reaper is now the leader')
+})
+
+reaper.on('leadershipLost', () => {
+  console.log('This reaper lost leadership')
+})
+
+await reaper.start()
+```
+
+Leader election uses Redis's `SET NX PX` pattern for atomic lock acquisition:
+- The leader acquires a lock with a TTL and renews it periodically
+- If the leader stops gracefully, it releases the lock immediately
+- If the leader crashes, the lock expires and a follower takes over
+- Only RedisStorage supports leader election; other storage backends will emit an error
+
 ### Custom Serialization
 
 Implement the `Serde` interface for custom serialization:
