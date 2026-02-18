@@ -1,3 +1,4 @@
+import { randomUUID } from 'node:crypto'
 import { EventEmitter } from 'node:events'
 import {
   mkdir,
@@ -7,12 +8,18 @@ import {
   rm,
   unlink,
   watch,
+  writeFile,
 } from 'node:fs/promises'
 import { join } from 'node:path'
 import type { Storage } from './types.ts'
 import { loadOptionalDependency } from './utils.ts'
 
 type WriteFileAtomic = (path: string, data: string | Buffer, options?: Record<string, unknown>) => Promise<void>
+
+const CLEANUP_LOCK_KEY = 'cleanup-leader'
+const CLEANUP_LOCK_TTL = 10000
+const CLEANUP_RENEWAL_INTERVAL = 3000
+const CLEANUP_ACQUIRE_RETRY = 5000
 
 interface FileStorageConfig {
   basePath: string;
@@ -48,6 +55,10 @@ export class FileStorage implements Storage {
   #cleanupInterval: ReturnType<typeof setInterval> | null = null
   #connected = false
   #writeFileAtomic!: WriteFileAtomic
+
+  #instanceId = randomUUID()
+  #isCleanupLeader = false
+  #leadershipTimer: ReturnType<typeof setInterval> | null = null
 
   constructor (config: FileStorageConfig) {
     this.#basePath = config.basePath
@@ -91,10 +102,21 @@ export class FileStorage implements Storage {
     this.#startQueueWatcher()
     this.#startNotifyWatcher()
 
-    // Start cleanup interval
-    this.#cleanupInterval = setInterval(() => {
-      this.#cleanupExpired().catch(() => {})
-    }, 1000)
+    // Try to become cleanup leader
+    const acquired = await this.acquireLeaderLock(
+      CLEANUP_LOCK_KEY,
+      this.#instanceId,
+      CLEANUP_LOCK_TTL
+    )
+
+    if (acquired) {
+      this.#startCleanupAsLeader()
+    }
+
+    // Start leadership timer
+    this.#leadershipTimer = setInterval(() => {
+      this.#leadershipTick().catch(() => {})
+    }, this.#isCleanupLeader ? CLEANUP_RENEWAL_INTERVAL : CLEANUP_ACQUIRE_RETRY)
 
     this.#connected = true
   }
@@ -102,16 +124,23 @@ export class FileStorage implements Storage {
   async disconnect (): Promise<void> {
     if (!this.#connected) return
 
+    // Stop leadership timer
+    if (this.#leadershipTimer) {
+      clearInterval(this.#leadershipTimer)
+      this.#leadershipTimer = null
+    }
+
+    // If leader, release lock and stop cleanup
+    if (this.#isCleanupLeader) {
+      this.#stopCleanup()
+      await this.releaseLeaderLock(CLEANUP_LOCK_KEY, this.#instanceId).catch(() => {})
+      this.#isCleanupLeader = false
+    }
+
     // Stop watchers
     if (this.#watchAbortController) {
       this.#watchAbortController.abort()
       this.#watchAbortController = null
-    }
-
-    // Stop cleanup
-    if (this.#cleanupInterval) {
-      clearInterval(this.#cleanupInterval)
-      this.#cleanupInterval = null
     }
 
     // Clear dequeue waiters
@@ -721,10 +750,136 @@ export class FileStorage implements Storage {
     }
   }
 
+  #startCleanupAsLeader (): void {
+    this.#isCleanupLeader = true
+    // Start cleanup interval
+    this.#cleanupInterval = setInterval(() => {
+      this.#cleanupExpired().catch(() => {})
+    }, 1000)
+  }
+
+  #stopCleanup (): void {
+    if (this.#cleanupInterval) {
+      clearInterval(this.#cleanupInterval)
+      this.#cleanupInterval = null
+    }
+  }
+
+  async #leadershipTick (): Promise<void> {
+    if (this.#isCleanupLeader) {
+      // Renew the lock
+      const renewed = await this.renewLeaderLock(
+        CLEANUP_LOCK_KEY,
+        this.#instanceId,
+        CLEANUP_LOCK_TTL
+      )
+      if (!renewed) {
+        // Lost leadership
+        this.#stopCleanup()
+        this.#isCleanupLeader = false
+        // Switch to follower interval
+        this.#restartLeadershipTimer(CLEANUP_ACQUIRE_RETRY)
+      }
+    } else {
+      // Try to acquire
+      const acquired = await this.acquireLeaderLock(
+        CLEANUP_LOCK_KEY,
+        this.#instanceId,
+        CLEANUP_LOCK_TTL
+      )
+      if (acquired) {
+        this.#startCleanupAsLeader()
+        // Switch to leader interval
+        this.#restartLeadershipTimer(CLEANUP_RENEWAL_INTERVAL)
+      }
+    }
+  }
+
+  #restartLeadershipTimer (intervalMs: number): void {
+    if (this.#leadershipTimer) {
+      clearInterval(this.#leadershipTimer)
+    }
+    this.#leadershipTimer = setInterval(() => {
+      this.#leadershipTick().catch(() => {})
+    }, intervalMs)
+  }
+
+  // ═══════════════════════════════════════════════════════════════════
+  // LEADER ELECTION
+  // ═══════════════════════════════════════════════════════════════════
+
+  async acquireLeaderLock (lockKey: string, ownerId: string, ttlMs: number): Promise<boolean> {
+    const lockPath = join(this.#basePath, `${lockKey}.lock`)
+    const data = JSON.stringify({ ownerId, expiresAt: Date.now() + ttlMs })
+
+    try {
+      // Exclusive create - fails if file exists
+      await writeFile(lockPath, data, { flag: 'wx' })
+      return true
+    } catch (err: unknown) {
+      if (err instanceof Error && 'code' in err && (err as NodeJS.ErrnoException).code === 'EEXIST') {
+        // Lock file exists, check if expired
+        try {
+          const content = JSON.parse(await readFile(lockPath, 'utf8'))
+          if (Date.now() <= content.expiresAt) {
+            // Not expired, someone else holds it
+            return false
+          }
+          // Expired - try to take over with atomic overwrite
+          const newData = JSON.stringify({ ownerId, expiresAt: Date.now() + ttlMs })
+          await this.#writeFileAtomic(lockPath, newData)
+          // Re-read to verify we won the race
+          const verify = JSON.parse(await readFile(lockPath, 'utf8'))
+          return verify.ownerId === ownerId
+        } catch {
+          return false
+        }
+      }
+      return false
+    }
+  }
+
+  async renewLeaderLock (lockKey: string, ownerId: string, ttlMs: number): Promise<boolean> {
+    const lockPath = join(this.#basePath, `${lockKey}.lock`)
+    try {
+      const content = JSON.parse(await readFile(lockPath, 'utf8'))
+      if (content.ownerId !== ownerId) return false
+      const data = JSON.stringify({ ownerId, expiresAt: Date.now() + ttlMs })
+      await this.#writeFileAtomic(lockPath, data)
+      return true
+    } catch {
+      return false
+    }
+  }
+
+  async releaseLeaderLock (lockKey: string, ownerId: string): Promise<boolean> {
+    const lockPath = join(this.#basePath, `${lockKey}.lock`)
+    try {
+      const content = JSON.parse(await readFile(lockPath, 'utf8'))
+      if (content.ownerId !== ownerId) return false
+      await unlink(lockPath)
+      return true
+    } catch {
+      return false
+    }
+  }
+
   /**
    * Clear all data (useful for testing)
    */
   async clear (): Promise<void> {
+    // Remove lock files
+    try {
+      const files = await readdir(this.#basePath)
+      await Promise.all(
+        files
+          .filter((f) => f.endsWith('.lock'))
+          .map((f) => unlink(join(this.#basePath, f)).catch(() => {}))
+      )
+    } catch {
+      // Ignore errors
+    }
+
     await Promise.all([
       rm(this.#queuePath, { recursive: true, force: true }),
       rm(this.#processingPath, { recursive: true, force: true }),

@@ -6,8 +6,8 @@ import { FileStorage } from '../../src/storage/file.ts'
 /**
  * Create a FileStorage instance for testing
  */
-export async function createFileStorage (): Promise<{ storage: FileStorage, cleanup: () => Promise<void> }> {
-  const basePath = await mkdtemp(join(tmpdir(), 'job-queue-test-'))
+export async function createFileStorage (config?: { basePath?: string }): Promise<{ storage: FileStorage, basePath: string, cleanup: () => Promise<void> }> {
+  const basePath = config?.basePath ?? await mkdtemp(join(tmpdir(), 'job-queue-test-'))
 
   const storage = new FileStorage({ basePath })
 
@@ -15,5 +15,5 @@ export async function createFileStorage (): Promise<{ storage: FileStorage, clea
     await rm(basePath, { recursive: true, force: true })
   }
 
-  return { storage, cleanup }
+  return { storage, basePath, cleanup }
 }
