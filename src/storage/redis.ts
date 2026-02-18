@@ -2,8 +2,9 @@ import { readFileSync } from 'node:fs'
 import { join, dirname } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { EventEmitter } from 'node:events'
-import { Redis } from 'iovalkey'
+import { type Redis } from 'iovalkey'
 import type { Storage } from './types.ts'
+import { loadOptionalDependency } from './utils.ts'
 
 const __dirname = dirname(fileURLToPath(import.meta.url))
 
@@ -74,16 +75,16 @@ export class RedisStorage implements Storage {
     return this.#key('workers')
   }
 
-  #reaperLockKey (): string {
-    return this.#key('reaper:lock')
-  }
-
   async connect (): Promise<void> {
     if (this.#client) return
 
-    this.#client = new Redis(this.#url)
-    this.#subscriber = new Redis(this.#url)
-    this.#blockingClient = new Redis(this.#url)
+    const redisModule = await loadOptionalDependency<{ Redis: new (url: string) => Redis }>(
+      'iovalkey', "RedisStorage requires the optional dependency 'iovalkey'. Install it with: npm install iovalkey"
+    )
+
+    this.#client = new redisModule.Redis(this.#url)
+    this.#subscriber = new redisModule.Redis(this.#url)
+    this.#blockingClient = new redisModule.Redis(this.#url)
 
     // Load Lua scripts
     await this.#loadScripts()

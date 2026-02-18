@@ -1,4 +1,3 @@
-import fastWriteAtomic from 'fast-write-atomic'
 import { EventEmitter } from 'node:events'
 import {
   mkdir,
@@ -11,8 +10,9 @@ import {
 } from 'node:fs/promises'
 import { join } from 'node:path'
 import type { Storage } from './types.ts'
+import { loadOptionalDependency } from './utils.ts'
 
-const writeFileAtomic = fastWriteAtomic.promise
+type WriteFileAtomic = (path: string, data: string | Buffer, options?: Record<string, unknown>) => Promise<void>
 
 interface FileStorageConfig {
   basePath: string;
@@ -44,19 +44,10 @@ export class FileStorage implements Storage {
   #dequeueWaiters: DequeueWaiter[] = []
   #drainingDequeueWaiters = false
   #dequeueDrainRequested = false
-  #queueWatcher: AsyncIterable<{
-    eventType: string;
-    filename: string | null;
-  }> | null = null
-
-  #notifyWatcher: AsyncIterable<{
-    eventType: string;
-    filename: string | null;
-  }> | null = null
-
   #watchAbortController: AbortController | null = null
   #cleanupInterval: ReturnType<typeof setInterval> | null = null
   #connected = false
+  #writeFileAtomic!: WriteFileAtomic
 
   constructor (config: FileStorageConfig) {
     this.#basePath = config.basePath
@@ -74,6 +65,12 @@ export class FileStorage implements Storage {
 
   async connect (): Promise<void> {
     if (this.#connected) return
+
+    const writeAtomicModule = await loadOptionalDependency<{ promise: WriteFileAtomic }>(
+      'fast-write-atomic',
+      "FileStorage requires the optional dependency 'fast-write-atomic'. Install it with: npm install fast-write-atomic"
+    )
+    this.#writeFileAtomic = writeAtomicModule.promise
 
     // Create directory structure
     await Promise.all([
@@ -307,7 +304,7 @@ export class FileStorage implements Storage {
     const state = `queued:${timestamp}`
     try {
       // Try to create job file - if it exists, this will overwrite but we check above
-      await writeFileAtomic(jobFile, state, { mode: 0o644 })
+      await this.#writeFileAtomic(jobFile, state, { mode: 0o644 })
     } catch {
       // Check if another process created it
       try {
@@ -324,7 +321,7 @@ export class FileStorage implements Storage {
       this.#queuePath,
       `${seq.toString().padStart(12, '0')}-${id}.msg`
     )
-    await writeFileAtomic(queueFile, message)
+    await this.#writeFileAtomic(queueFile, message)
 
     // Publish event
     this.#eventEmitter.emit('event', id, 'queued')
@@ -367,7 +364,7 @@ export class FileStorage implements Storage {
       this.#queuePath,
       `${seq.toString().padStart(12, '0')}-${id}.msg`
     )
-    await writeFileAtomic(queueFile, message)
+    await this.#writeFileAtomic(queueFile, message)
 
     // Notify waiters
     await this.#notifyDequeueWaiters()
@@ -387,7 +384,7 @@ export class FileStorage implements Storage {
   }
 
   async setJobState (id: string, state: string): Promise<void> {
-    await writeFileAtomic(join(this.#jobsPath, `${id}.state`), state)
+    await this.#writeFileAtomic(join(this.#jobsPath, `${id}.state`), state)
   }
 
   async deleteJob (id: string): Promise<boolean> {
@@ -417,8 +414,8 @@ export class FileStorage implements Storage {
     const expiresAt = Date.now() + ttlMs
 
     await Promise.all([
-      writeFileAtomic(filePath, result),
-      writeFileAtomic(ttlPath, expiresAt.toString()),
+      this.#writeFileAtomic(filePath, result),
+      this.#writeFileAtomic(ttlPath, expiresAt.toString()),
     ])
   }
 
@@ -448,8 +445,8 @@ export class FileStorage implements Storage {
     const expiresAt = Date.now() + ttlMs
 
     await Promise.all([
-      writeFileAtomic(filePath, error),
-      writeFileAtomic(ttlPath, expiresAt.toString()),
+      this.#writeFileAtomic(filePath, error),
+      this.#writeFileAtomic(ttlPath, expiresAt.toString()),
     ])
   }
 
@@ -475,7 +472,7 @@ export class FileStorage implements Storage {
   async registerWorker (workerId: string, ttlMs: number): Promise<void> {
     const filePath = join(this.#workersPath, `${workerId}.worker`)
     const expiresAt = Date.now() + ttlMs
-    await writeFileAtomic(filePath, expiresAt.toString())
+    await this.#writeFileAtomic(filePath, expiresAt.toString())
   }
 
   async refreshWorker (workerId: string, ttlMs: number): Promise<void> {
@@ -560,7 +557,7 @@ export class FileStorage implements Storage {
   ): Promise<void> {
     // Write a notification file that will be picked up by the watcher
     const notifyFile = join(this.#notifyPath, `${id}-${Date.now()}.notify`)
-    await writeFileAtomic(notifyFile, `${id}:${status}`)
+    await this.#writeFileAtomic(notifyFile, `${id}:${status}`)
 
     // Also emit locally for in-process subscribers
     this.#notifyEmitter.emit(`notify:${id}`, status)

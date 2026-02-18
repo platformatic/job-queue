@@ -29,7 +29,7 @@
     "build": "rm -rf dist && tsc -p tsconfig.build.json",
     "lint": "eslint --cache",
     "typecheck": "tsc -p . --noEmit",
-    "format": "prettier -w benchmarks playground src test",
+    "format": "prettier -w benchmark src test",
     "test": "c8 -c test/config/c8-local.json node --test-reporter=cleaner-spec-reporter --no-warnings --test --test-timeout=60000 'test/**/*.test.ts'",
     "test:ci": "c8 -c test/config/c8-ci.json node --test-reporter=cleaner-spec-reporter --no-warnings --test --test-timeout=60000 'test/**/*.test.ts'",
     "test:docker:up": "docker-compose up -d --wait",
@@ -42,7 +42,8 @@
     "bench:redis": "REDIS_URL=${REDIS_URL:-redis://localhost:6379} node benchmark/request-response.ts",
     "bench:valkey": "REDIS_URL=${REDIS_URL:-redis://localhost:6380} node benchmark/request-response.ts"
   },
-  "dependencies": {
+  "dependencies": {},
+  "optionalDependencies": {
     "fast-write-atomic": "^0.4.0",
     "iovalkey": "^0.2.0"
   },
