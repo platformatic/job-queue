@@ -1,1 +1,0 @@
-/Volumes/DATI/Users/Shogun/Programmazione/Work/Platformatic/ide-settings/prettier.config.cjs
