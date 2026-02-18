@@ -5,7 +5,7 @@ import { join } from 'node:path'
 import { tmpdir } from 'node:os'
 import { setTimeout as sleep } from 'node:timers/promises'
 import { createFileStorage } from './fixtures/file.ts'
-import { FileStorage } from '../src/storage/file.ts'
+import { type FileStorage } from '../src/storage/file.ts'
 import { promisifyCallback } from './helpers/events.ts'
 
 describe('FileStorage', () => {
@@ -234,9 +234,8 @@ describe('FileStorage', () => {
 
   describe('notifications', () => {
     it('should notify on job completion', async () => {
-      const { value, unsubscribe } = await promisifyCallback<string>((handler) =>
-        storage.subscribeToJob('job-1', handler)
-      )
+      const { value, unsubscribe } = await promisifyCallback<string>(handler =>
+        storage.subscribeToJob('job-1', handler))
 
       await storage.notifyJobComplete('job-1', 'completed')
 
@@ -248,9 +247,8 @@ describe('FileStorage', () => {
     })
 
     it('should notify on job failure', async () => {
-      const { value, unsubscribe } = await promisifyCallback<string>((handler) =>
-        storage.subscribeToJob('job-1', handler)
-      )
+      const { value, unsubscribe } = await promisifyCallback<string>(handler =>
+        storage.subscribeToJob('job-1', handler))
 
       await storage.notifyJobComplete('job-1', 'failed')
 
@@ -264,7 +262,7 @@ describe('FileStorage', () => {
 
   describe('events', () => {
     it('should emit events on state changes', async () => {
-      const events: Array<{ id: string, event: string }> = []
+      const events: Array<{ id: string; event: string }> = []
 
       const unsubscribe = await storage.subscribeToEvents((id, event) => {
         events.push({ id, event })
@@ -282,7 +280,7 @@ describe('FileStorage', () => {
     })
 
     it('should emit queued event on enqueue', async () => {
-      const events: Array<{ id: string, event: string }> = []
+      const events: Array<{ id: string; event: string }> = []
 
       const unsubscribe = await storage.subscribeToEvents((id, event) => {
         events.push({ id, event })
@@ -305,9 +303,8 @@ describe('FileStorage', () => {
       await storage.dequeue('worker-1', 1)
       await storage.setJobState('job-1', 'processing:123:worker-1')
 
-      const { value: notificationReceived, unsubscribe } = await promisifyCallback<string>((handler) =>
-        storage.subscribeToJob('job-1', handler)
-      )
+      const { value: notificationReceived, unsubscribe } = await promisifyCallback<string>(handler =>
+        storage.subscribeToJob('job-1', handler))
 
       await storage.completeJob('job-1', message, 'worker-1', result, 60000)
 
@@ -337,9 +334,8 @@ describe('FileStorage', () => {
       await storage.dequeue('worker-1', 1)
       await storage.setJobState('job-1', 'processing:123:worker-1')
 
-      const { value: notificationReceived, unsubscribe } = await promisifyCallback<string>((handler) =>
-        storage.subscribeToJob('job-1', handler)
-      )
+      const { value: notificationReceived, unsubscribe } = await promisifyCallback<string>(handler =>
+        storage.subscribeToJob('job-1', handler))
 
       await storage.failJob('job-1', message, 'worker-1', error, 60000)
 

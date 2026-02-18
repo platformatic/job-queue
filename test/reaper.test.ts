@@ -67,7 +67,9 @@ describe('Reaper', () => {
 
       let processCount = 0
       let resolveFirstJob: (() => void) | null = null
-      const firstJobStarted = new Promise<void>(resolve => { resolveFirstJob = resolve })
+      const firstJobStarted = new Promise<void>(resolve => {
+        resolveFirstJob = resolve
+      })
       let abortFirstHandler: (() => void) | undefined
 
       testQueue.execute(async (job: Job<{ value: number }>) => {
@@ -75,7 +77,7 @@ describe('Reaper', () => {
         if (processCount === 1) {
           resolveFirstJob!()
           // First attempt: stall but allow cleanup via abort
-          await new Promise<void>((resolve) => {
+          await new Promise<void>(resolve => {
             abortFirstHandler = resolve
             job.signal.addEventListener('abort', () => resolve())
           })
@@ -118,13 +120,15 @@ describe('Reaper', () => {
       })
 
       let resolveFirstJob: (() => void) | null = null
-      const firstJobStarted = new Promise<void>(resolve => { resolveFirstJob = resolve })
+      const firstJobStarted = new Promise<void>(resolve => {
+        resolveFirstJob = resolve
+      })
       let abortHandler: (() => void) | undefined
 
       testQueue.execute(async (job: Job<{ value: number }>) => {
         resolveFirstJob!()
         // Simulate stall but allow abort for cleanup
-        await new Promise<void>((resolve) => {
+        await new Promise<void>(resolve => {
           abortHandler = resolve
           job.signal.addEventListener('abort', () => resolve())
         })
@@ -220,13 +224,15 @@ describe('Reaper', () => {
       const oldTimestamp = Date.now() - 200 // 200ms ago (past visibility timeout)
 
       // Add job to worker's processing queue
-      const message = Buffer.from(JSON.stringify({
-        id: 'stalled-job',
-        payload: { value: 42 },
-        createdAt: oldTimestamp,
-        attempts: 0,
-        maxAttempts: 3
-      }))
+      const message = Buffer.from(
+        JSON.stringify({
+          id: 'stalled-job',
+          payload: { value: 42 },
+          createdAt: oldTimestamp,
+          attempts: 0,
+          maxAttempts: 3
+        })
+      )
       await storage.registerWorker('worker-1', 60000)
 
       // Enqueue first, then dequeue to worker's processing queue
@@ -238,7 +244,7 @@ describe('Reaper', () => {
 
       // Track stalled events
       const stalledJobs: string[] = []
-      reaper.on('stalled', (id) => {
+      reaper.on('stalled', id => {
         stalledJobs.push(id)
       })
 
@@ -267,13 +273,15 @@ describe('Reaper', () => {
 
         await storage.registerWorker(workerId, 60000)
 
-        const message = Buffer.from(JSON.stringify({
-          id: jobId,
-          payload: { value: i },
-          createdAt: oldTimestamp,
-          attempts: 0,
-          maxAttempts: 3
-        }))
+        const message = Buffer.from(
+          JSON.stringify({
+            id: jobId,
+            payload: { value: i },
+            createdAt: oldTimestamp,
+            attempts: 0,
+            maxAttempts: 3
+          })
+        )
 
         // Enqueue then dequeue to get into processing queue
         await storage.enqueue(jobId, message, oldTimestamp)
@@ -284,7 +292,7 @@ describe('Reaper', () => {
       }
 
       const stalledJobs: string[] = []
-      reaper.on('stalled', (id) => {
+      reaper.on('stalled', id => {
         stalledJobs.push(id)
       })
 
@@ -312,13 +320,15 @@ describe('Reaper', () => {
       })
 
       let resolveJob: (() => void) | null = null
-      const jobStarted = new Promise<void>(resolve => { resolveJob = resolve })
+      const jobStarted = new Promise<void>(resolve => {
+        resolveJob = resolve
+      })
       let abortHandler: (() => void) | undefined
 
       testQueue.execute(async (job: Job<{ value: number }>) => {
         resolveJob!()
         // Allow abort for cleanup
-        await new Promise<void>((resolve) => {
+        await new Promise<void>(resolve => {
           abortHandler = resolve
           job.signal.addEventListener('abort', () => resolve())
         })

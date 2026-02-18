@@ -105,11 +105,7 @@ export class Queue<TPayload, TResult = void> extends EventEmitter<QueueEvents<TR
   /**
    * Enqueue a job (fire-and-forget)
    */
-  async enqueue (
-    id: string,
-    payload: TPayload,
-    options?: EnqueueOptions
-  ): Promise<EnqueueResult<TResult>> {
+  async enqueue (id: string, payload: TPayload, options?: EnqueueOptions): Promise<EnqueueResult<TResult>> {
     const result = await this.#producer.enqueue(id, payload, options)
     if (result.status === 'queued') {
       this.emit('enqueued', id)
@@ -120,11 +116,7 @@ export class Queue<TPayload, TResult = void> extends EventEmitter<QueueEvents<TR
   /**
    * Enqueue a job and wait for the result
    */
-  async enqueueAndWait (
-    id: string,
-    payload: TPayload,
-    options?: EnqueueAndWaitOptions
-  ): Promise<TResult> {
+  async enqueueAndWait (id: string, payload: TPayload, options?: EnqueueAndWaitOptions): Promise<TResult> {
     return this.#producer.enqueueAndWait(id, payload, options)
   }
 
@@ -169,7 +161,7 @@ export class Queue<TPayload, TResult = void> extends EventEmitter<QueueEvents<TR
     })
 
     // Forward consumer events
-    this.#consumer.on('error', (error) => {
+    this.#consumer.on('error', error => {
       this.emit('error', error)
     })
 
@@ -185,12 +177,12 @@ export class Queue<TPayload, TResult = void> extends EventEmitter<QueueEvents<TR
       this.emit('failing', id, error, attempt)
     })
 
-    this.#consumer.on('requeued', (id) => {
+    this.#consumer.on('requeued', id => {
       this.emit('requeued', id)
     })
 
     this.#consumer.execute(this.#handler)
-    this.#consumer.start().catch((err) => {
+    this.#consumer.start().catch(err => {
       this.emit('error', err)
     })
   }

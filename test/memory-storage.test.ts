@@ -237,7 +237,7 @@ describe('MemoryStorage', () => {
     it('should notify on job completion', async () => {
       let notifiedStatus: string | null = null
 
-      const unsubscribe = await storage.subscribeToJob('job-1', (status) => {
+      const unsubscribe = await storage.subscribeToJob('job-1', status => {
         notifiedStatus = status
       })
 
@@ -251,7 +251,7 @@ describe('MemoryStorage', () => {
     it('should notify on job failure', async () => {
       let notifiedStatus: string | null = null
 
-      const unsubscribe = await storage.subscribeToJob('job-1', (status) => {
+      const unsubscribe = await storage.subscribeToJob('job-1', status => {
         notifiedStatus = status
       })
 
@@ -265,11 +265,11 @@ describe('MemoryStorage', () => {
     it('should handle multiple subscribers', async () => {
       const notifications: string[] = []
 
-      const unsub1 = await storage.subscribeToJob('job-1', (status) => {
+      const unsub1 = await storage.subscribeToJob('job-1', status => {
         notifications.push(`sub1:${status}`)
       })
 
-      const unsub2 = await storage.subscribeToJob('job-1', (status) => {
+      const unsub2 = await storage.subscribeToJob('job-1', status => {
         notifications.push(`sub2:${status}`)
       })
 
@@ -284,7 +284,7 @@ describe('MemoryStorage', () => {
 
   describe('events', () => {
     it('should emit events on state changes', async () => {
-      const events: Array<{ id: string, event: string }> = []
+      const events: Array<{ id: string; event: string }> = []
 
       const unsubscribe = await storage.subscribeToEvents((id, event) => {
         events.push({ id, event })
@@ -302,7 +302,7 @@ describe('MemoryStorage', () => {
     })
 
     it('should emit queued event on enqueue', async () => {
-      const events: Array<{ id: string, event: string }> = []
+      const events: Array<{ id: string; event: string }> = []
 
       const unsubscribe = await storage.subscribeToEvents((id, event) => {
         events.push({ id, event })
@@ -357,7 +357,7 @@ describe('MemoryStorage', () => {
       await storage.setJobState('job-1', 'processing:123:worker-1')
 
       let notifiedStatus: string | null = null
-      await storage.subscribeToJob('job-1', (status) => {
+      await storage.subscribeToJob('job-1', status => {
         notifiedStatus = status
       })
 

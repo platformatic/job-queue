@@ -89,7 +89,7 @@ export class Consumer<TPayload, TResult> extends EventEmitter<ConsumerEvents<TRe
     }
 
     // Don't await - let them run in background
-    Promise.all(loops).catch((err) => {
+    Promise.all(loops).catch(err => {
       this.emit('error', err)
     })
   }
@@ -111,7 +111,7 @@ export class Consumer<TPayload, TResult> extends EventEmitter<ConsumerEvents<TRe
     const maxWait = this.#visibilityTimeout
     const startTime = Date.now()
 
-    while (this.#activeJobs > 0 && (Date.now() - startTime) < maxWait) {
+    while (this.#activeJobs > 0 && Date.now() - startTime < maxWait) {
       await new Promise(resolve => setTimeout(resolve, 100))
     }
 
@@ -229,15 +229,17 @@ export class Consumer<TPayload, TResult> extends EventEmitter<ConsumerEvents<TRe
       } else {
         // Max retries exceeded - fail the job
         const maxRetriesError = new MaxRetriesError(id, currentAttempts, error)
-        const serializedError = Buffer.from(JSON.stringify(
-          typeof error.toJSON === 'function'
-            ? error.toJSON()
-            : {
-                message: error.message,
-                code: error.code,
-                stack: error.stack
-              }
-        ))
+        const serializedError = Buffer.from(
+          JSON.stringify(
+            typeof error.toJSON === 'function'
+              ? error.toJSON()
+              : {
+                  message: error.message,
+                  code: error.code,
+                  stack: error.stack
+                }
+          )
+        )
 
         await this.#storage.failJob(id, message, this.#workerId, serializedError, resultTTL)
 
@@ -258,13 +260,13 @@ export class Consumer<TPayload, TResult> extends EventEmitter<ConsumerEvents<TRe
     // Check if callback style (handler.length > 1)
     if (handler.length > 1) {
       return new Promise<TResult>((resolve, reject) => {
-        (handler as (job: Job<TPayload>, callback: (err: Error | null, result?: TResult) => void) => void)(
-          job,
-          (err, result) => {
-            if (err) reject(err)
-            else resolve(result as TResult)
-          }
-        )
+        ;(handler as (job: Job<TPayload>, callback: (err: Error | null, result?: TResult) => void) => void)(job, (
+          err,
+          result
+        ) => {
+          if (err) reject(err)
+          else resolve(result as TResult)
+        })
       })
     }
 

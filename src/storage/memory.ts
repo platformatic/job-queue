@@ -92,7 +92,7 @@ export class MemoryStorage implements Storage {
     }
 
     // No job available, wait for one
-    return new Promise((resolve) => {
+    return new Promise(resolve => {
       const timeoutId = setTimeout(() => {
         // Remove this waiter from the list
         const index = this.#dequeueWaiters.findIndex(w => w.resolve === resolve)
@@ -267,9 +267,7 @@ export class MemoryStorage implements Storage {
     this.#notifyEmitter.emit(`notify:${id}`, status)
   }
 
-  async subscribeToEvents (
-    handler: (id: string, event: string) => void
-  ): Promise<() => Promise<void>> {
+  async subscribeToEvents (handler: (id: string, event: string) => void): Promise<() => Promise<void>> {
     this.#eventEmitter.on('event', handler)
 
     return async () => {
@@ -281,13 +279,7 @@ export class MemoryStorage implements Storage {
     this.#eventEmitter.emit('event', id, event)
   }
 
-  async completeJob (
-    id: string,
-    message: Buffer,
-    workerId: string,
-    result: Buffer,
-    resultTTL: number
-  ): Promise<void> {
+  async completeJob (id: string, message: Buffer, workerId: string, result: Buffer, resultTTL: number): Promise<void> {
     const timestamp = Date.now()
 
     // Set state to completed
@@ -306,13 +298,7 @@ export class MemoryStorage implements Storage {
     this.#eventEmitter.emit('event', id, 'completed')
   }
 
-  async failJob (
-    id: string,
-    message: Buffer,
-    workerId: string,
-    error: Buffer,
-    errorTTL: number
-  ): Promise<void> {
+  async failJob (id: string, message: Buffer, workerId: string, error: Buffer, errorTTL: number): Promise<void> {
     const timestamp = Date.now()
 
     // Set state to failed
@@ -331,12 +317,7 @@ export class MemoryStorage implements Storage {
     this.#eventEmitter.emit('event', id, 'failed')
   }
 
-  async retryJob (
-    id: string,
-    message: Buffer,
-    workerId: string,
-    attempts: number
-  ): Promise<void> {
+  async retryJob (id: string, message: Buffer, workerId: string, attempts: number): Promise<void> {
     const timestamp = Date.now()
 
     // Set state to failing

@@ -55,11 +55,7 @@ describe('Request/Response', () => {
 
       await concurrentQueue.stop()
 
-      assert.deepStrictEqual(results, [
-        { result: 2 },
-        { result: 4 },
-        { result: 6 }
-      ])
+      assert.deepStrictEqual(results, [{ result: 2 }, { result: 4 }, { result: 6 }])
     })
   })
 

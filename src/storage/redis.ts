@@ -1,8 +1,8 @@
-import { readFileSync } from 'node:fs'
-import { join, dirname } from 'node:path'
-import { fileURLToPath } from 'node:url'
-import { EventEmitter } from 'node:events'
 import { type Redis } from 'iovalkey'
+import { EventEmitter } from 'node:events'
+import { readFileSync } from 'node:fs'
+import { dirname, join } from 'node:path'
+import { fileURLToPath } from 'node:url'
 import type { Storage } from './types.ts'
 import { loadOptionalDependency } from './utils.ts'
 
@@ -78,9 +78,7 @@ export class RedisStorage implements Storage {
   async connect (): Promise<void> {
     if (this.#client) return
 
-    const redisModule = await loadOptionalDependency<{ Redis: new (url: string) => Redis }>(
-      'iovalkey', "RedisStorage requires the optional dependency 'iovalkey'. Install it with: npm install iovalkey"
-    )
+    const redisModule = await loadOptionalDependency<{ Redis: new (url: string) => Redis }>('iovalkey', 'RedisStorage')
 
     this.#client = new redisModule.Redis(this.#url)
     this.#subscriber = new redisModule.Redis(this.#url)
@@ -224,12 +222,7 @@ export class RedisStorage implements Storage {
   }
 
   async deleteJob (id: string): Promise<boolean> {
-    const result = await this.#client!.evalsha(
-      this.#scriptSHAs!.cancel,
-      1,
-      this.#jobsKey(),
-      id
-    )
+    const result = await this.#client!.evalsha(this.#scriptSHAs!.cancel, 1, this.#jobsKey(), id)
     return result === 1
   }
 
@@ -315,9 +308,7 @@ export class RedisStorage implements Storage {
     await this.#client!.publish(channel, status)
   }
 
-  async subscribeToEvents (
-    handler: (id: string, event: string) => void
-  ): Promise<() => Promise<void>> {
+  async subscribeToEvents (handler: (id: string, event: string) => void): Promise<() => Promise<void>> {
     this.#eventEmitter.on('event', handler)
 
     if (!this.#eventSubscription) {
@@ -334,13 +325,7 @@ export class RedisStorage implements Storage {
     await this.#client!.publish(this.#eventsChannel(), `${id}:${event}`)
   }
 
-  async completeJob (
-    id: string,
-    message: Buffer,
-    workerId: string,
-    result: Buffer,
-    resultTTL: number
-  ): Promise<void> {
+  async completeJob (id: string, message: Buffer, workerId: string, result: Buffer, resultTTL: number): Promise<void> {
     const timestamp = Date.now()
     const state = `completed:${timestamp}`
 
@@ -362,13 +347,7 @@ export class RedisStorage implements Storage {
     await this.publishEvent(id, 'completed')
   }
 
-  async failJob (
-    id: string,
-    message: Buffer,
-    workerId: string,
-    error: Buffer,
-    errorTTL: number
-  ): Promise<void> {
+  async failJob (id: string, message: Buffer, workerId: string, error: Buffer, errorTTL: number): Promise<void> {
     const timestamp = Date.now()
     const state = `failed:${timestamp}`
 
@@ -390,12 +369,7 @@ export class RedisStorage implements Storage {
     await this.publishEvent(id, 'failed')
   }
 
-  async retryJob (
-    id: string,
-    message: Buffer,
-    workerId: string,
-    attempts: number
-  ): Promise<void> {
+  async retryJob (id: string, message: Buffer, workerId: string, attempts: number): Promise<void> {
     const timestamp = Date.now()
     const state = `failing:${timestamp}:${attempts}`
 
@@ -458,13 +432,7 @@ export class RedisStorage implements Storage {
 
   async acquireLeaderLock (lockKey: string, ownerId: string, ttlMs: number): Promise<boolean> {
     // SET NX PX: Set only if Not eXists, with PX milliseconds expiry
-    const result = await this.#client!.set(
-      this.#key(lockKey),
-      ownerId,
-      'PX',
-      ttlMs,
-      'NX'
-    )
+    const result = await this.#client!.set(this.#key(lockKey), ownerId, 'PX', ttlMs, 'NX')
     return result === 'OK'
   }
 
@@ -481,12 +449,7 @@ export class RedisStorage implements Storage {
 
   async releaseLeaderLock (lockKey: string, ownerId: string): Promise<boolean> {
     if (!this.#client) return false
-    const result = await this.#client.evalsha(
-      this.#scriptSHAs!.releaseLeaderLock,
-      1,
-      this.#key(lockKey),
-      ownerId
-    )
+    const result = await this.#client.evalsha(this.#scriptSHAs!.releaseLeaderLock, 1, this.#key(lockKey), ownerId)
     return result === 1
   }
 }

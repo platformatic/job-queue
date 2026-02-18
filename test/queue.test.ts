@@ -254,13 +254,15 @@ describe('Queue', () => {
 
       // Enqueue before starting so job sits in queue
       await storage.connect()
-      const msg = Buffer.from(JSON.stringify({
-        id: 'job-1',
-        payload: { value: 42 },
-        createdAt: Date.now(),
-        attempts: 0,
-        maxAttempts: 3
-      }))
+      const msg = Buffer.from(
+        JSON.stringify({
+          id: 'job-1',
+          payload: { value: 42 },
+          createdAt: Date.now(),
+          attempts: 0,
+          maxAttempts: 3
+        })
+      )
       await storage.enqueue('job-1', msg, Date.now())
 
       // Cancel before starting consumer
@@ -436,14 +438,11 @@ describe('Queue', () => {
     })
 
     it('should reject invalid per-job resultTTL values', async () => {
-      await assert.rejects(
-        queue.enqueue('job-1', { value: 1 }, { resultTTL: 0 }),
-        (err: Error) => {
-          assert.strictEqual(err.name, 'TypeError')
-          assert.match(err.message, /resultTTL must be a positive integer/)
-          return true
-        }
-      )
+      await assert.rejects(queue.enqueue('job-1', { value: 1 }, { resultTTL: 0 }), (err: Error) => {
+        assert.strictEqual(err.name, 'TypeError')
+        assert.match(err.message, /resultTTL must be a positive integer/)
+        return true
+      })
     })
   })
 
@@ -460,7 +459,9 @@ describe('Queue', () => {
 
       // Create promise that resolves when 3 jobs complete
       let resolveAll: () => void
-      const allCompleted = new Promise<void>(resolve => { resolveAll = resolve })
+      const allCompleted = new Promise<void>(resolve => {
+        resolveAll = resolve
+      })
       let completedCount = 0
 
       concurrentQueue.execute(async (job: Job<{ value: number }>) => {

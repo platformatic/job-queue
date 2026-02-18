@@ -80,7 +80,7 @@ ${'─'.repeat(50)}
 
 // Consumer worker code
 async function runConsumer (): Promise<void> {
-  const { redisUrl, keyPrefix } = workerData as { redisUrl: string, keyPrefix: string }
+  const { redisUrl, keyPrefix } = workerData as { redisUrl: string; keyPrefix: string }
 
   const storage = new RedisStorage({
     url: redisUrl,
@@ -93,12 +93,12 @@ async function runConsumer (): Promise<void> {
     concurrency: 100
   })
 
-  queue.execute(async (job) => {
+  queue.execute(async job => {
     const latency = Date.now() - job.payload.timestamp
     return { processed: true, latency }
   })
 
-  queue.on('error', (err) => {
+  queue.on('error', err => {
     console.error('Consumer error:', err)
   })
 
@@ -108,7 +108,7 @@ async function runConsumer (): Promise<void> {
   parentPort!.postMessage({ type: 'ready' })
 
   // Wait for done signal
-  await new Promise<void>((resolve) => {
+  await new Promise<void>(resolve => {
     parentPort!.on('message', async (msg: string) => {
       if (msg === 'stop') {
         await queue.stop()
@@ -121,11 +121,7 @@ async function runConsumer (): Promise<void> {
 }
 
 // Main thread code
-async function runBenchmark (
-  redisUrl: string,
-  keyPrefix: string,
-  config: BenchmarkConfig
-): Promise<Stats> {
+async function runBenchmark (redisUrl: string, keyPrefix: string, config: BenchmarkConfig): Promise<Stats> {
   const { requests, concurrency, payloadSize } = config
   const payload = 'x'.repeat(payloadSize)
   const latencies: number[] = []
@@ -152,26 +148,32 @@ async function runBenchmark (
   const workers: Promise<void>[] = []
 
   for (let i = 0; i < concurrency; i++) {
-    workers.push((async () => {
-      while (completed < requests) {
-        const id = `${config.name}-${jobId++}`
-        if (jobId > requests) break
+    workers.push(
+      (async () => {
+        while (completed < requests) {
+          const id = `${config.name}-${jobId++}`
+          if (jobId > requests) break
 
-        const requestStart = performance.now()
-        try {
-          await producer.enqueueAndWait(id, {
-            data: payload,
-            timestamp: Date.now()
-          }, { timeout: 30000 })
+          const requestStart = performance.now()
+          try {
+            await producer.enqueueAndWait(
+              id,
+              {
+                data: payload,
+                timestamp: Date.now()
+              },
+              { timeout: 30000 }
+            )
 
-          const latency = performance.now() - requestStart
-          latencies.push(latency)
-          completed++
-        } catch (err) {
-          console.error(`Request ${id} failed:`, err)
+            const latency = performance.now() - requestStart
+            latencies.push(latency)
+            completed++
+          } catch (err) {
+            console.error(`Request ${id} failed:`, err)
+          }
         }
-      }
-    })())
+      })()
+    )
   }
 
   await Promise.all(workers)
@@ -257,7 +259,7 @@ Redis URL: ${redisUrl}
 
   // Stop consumer worker
   consumerWorker.postMessage('stop')
-  await new Promise<void>((resolve) => {
+  await new Promise<void>(resolve => {
     consumerWorker.on('message', (msg: WorkerMessage) => {
       if (msg.type === 'done') resolve()
     })
@@ -275,12 +277,12 @@ Redis URL: ${redisUrl}
 
 // Entry point
 if (isMainThread) {
-  main().catch((err) => {
+  main().catch(err => {
     console.error('Benchmark failed:', err)
     process.exit(1)
   })
 } else {
-  runConsumer().catch((err) => {
+  runConsumer().catch(err => {
     parentPort!.postMessage({ type: 'error', error: err.message })
   })
 }

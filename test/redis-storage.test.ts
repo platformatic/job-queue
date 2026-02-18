@@ -1,7 +1,7 @@
 import assert from 'node:assert'
 import { afterEach, beforeEach, describe, it } from 'node:test'
 import { setTimeout as sleep } from 'node:timers/promises'
-import { RedisStorage } from '../src/storage/redis.ts'
+import { type RedisStorage } from '../src/storage/redis.ts'
 import { createRedisStorage } from './fixtures/redis.ts'
 import { promisifyCallback, waitForCallbacks } from './helpers/events.ts'
 
@@ -221,9 +221,8 @@ describe('RedisStorage', () => {
 
   describe('notifications', () => {
     it('should notify on job completion', async () => {
-      const { value, unsubscribe } = await promisifyCallback<string>((handler) =>
-        storage.subscribeToJob('job-1', handler)
-      )
+      const { value, unsubscribe } = await promisifyCallback<string>(handler =>
+        storage.subscribeToJob('job-1', handler))
 
       // Small delay to ensure subscription is active
       await sleep(50)
@@ -239,9 +238,8 @@ describe('RedisStorage', () => {
     })
 
     it('should notify on job failure', async () => {
-      const { value, unsubscribe } = await promisifyCallback<string>((handler) =>
-        storage.subscribeToJob('job-1', handler)
-      )
+      const { value, unsubscribe } = await promisifyCallback<string>(handler =>
+        storage.subscribeToJob('job-1', handler))
 
       await sleep(50)
 
@@ -257,7 +255,7 @@ describe('RedisStorage', () => {
 
   describe('events', () => {
     it('should emit events on state changes', async () => {
-      const events: Array<{ id: string, event: string }> = []
+      const events: Array<{ id: string; event: string }> = []
       const { callback, promise: eventsReceived } = waitForCallbacks(2)
 
       const unsubscribe = await storage.subscribeToEvents((id, event) => {
@@ -281,7 +279,7 @@ describe('RedisStorage', () => {
     })
 
     it('should emit queued event on enqueue', async () => {
-      const events: Array<{ id: string, event: string }> = []
+      const events: Array<{ id: string; event: string }> = []
       const { callback, promise: eventReceived } = waitForCallbacks(1)
 
       const unsubscribe = await storage.subscribeToEvents((id, event) => {
@@ -310,9 +308,8 @@ describe('RedisStorage', () => {
       await storage.dequeue('worker-1', 1)
       await storage.setJobState('job-1', 'processing:123:worker-1')
 
-      const { value: notificationReceived, unsubscribe } = await promisifyCallback<string>((handler) =>
-        storage.subscribeToJob('job-1', handler)
-      )
+      const { value: notificationReceived, unsubscribe } = await promisifyCallback<string>(handler =>
+        storage.subscribeToJob('job-1', handler))
 
       await sleep(50)
 
@@ -344,9 +341,8 @@ describe('RedisStorage', () => {
       await storage.dequeue('worker-1', 1)
       await storage.setJobState('job-1', 'processing:123:worker-1')
 
-      const { value: notificationReceived, unsubscribe } = await promisifyCallback<string>((handler) =>
-        storage.subscribeToJob('job-1', handler)
-      )
+      const { value: notificationReceived, unsubscribe } = await promisifyCallback<string>(handler =>
+        storage.subscribeToJob('job-1', handler))
 
       await sleep(50)
 
