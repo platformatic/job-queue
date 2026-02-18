@@ -317,6 +317,37 @@ describe('Queue', () => {
       assert.strictEqual(status.state, 'completed')
       assert.deepStrictEqual(status.result, { result: 42 })
     })
+
+    it('should use error.toJSON() for failed job status when available', async () => {
+      class JsonError extends Error {
+        toJSON (): unknown {
+          return {
+            message: this.message,
+            code: 'CUSTOM_ERROR',
+            details: { source: 'toJSON' }
+          }
+        }
+      }
+
+      queue.execute(async () => {
+        throw new JsonError('Serialized by toJSON')
+      })
+
+      await queue.start()
+
+      const failedPromise = once(queue, 'failed')
+      await queue.enqueue('job-1', { value: 21 }, { maxAttempts: 1 })
+      await failedPromise
+
+      const status = await queue.getStatus('job-1')
+      assert.ok(status)
+      assert.strictEqual(status.state, 'failed')
+      assert.deepStrictEqual(status.error, {
+        message: 'Serialized by toJSON',
+        code: 'CUSTOM_ERROR',
+        details: { source: 'toJSON' }
+      })
+    })
   })
 
   describe('concurrency', () => {

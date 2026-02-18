@@ -25,6 +25,8 @@ interface ConsumerEvents<TResult> {
   requeued: [id: string]
 }
 
+type ExtendedError = Error & { code?: string; toJSON?: () => Record<string, any> }
+
 /**
  * Consumer handles processing jobs from the queue
  */
@@ -209,7 +211,7 @@ export class Consumer<TPayload, TResult> extends EventEmitter<ConsumerEvents<TRe
       // Clear visibility timer
       clearTimeout(visibilityTimer)
 
-      const error = err as Error
+      const error = err as ExtendedError
       const currentAttempts = attempts + 1
 
       if (currentAttempts < maxAttempts) {
@@ -226,11 +228,15 @@ export class Consumer<TPayload, TResult> extends EventEmitter<ConsumerEvents<TRe
       } else {
         // Max retries exceeded - fail the job
         const maxRetriesError = new MaxRetriesError(id, currentAttempts, error)
-        const serializedError = Buffer.from(JSON.stringify({
-          message: error.message,
-          code: (error as Error & { code?: string }).code,
-          stack: error.stack
-        }))
+        const serializedError = Buffer.from(JSON.stringify(
+          typeof error.toJSON === 'function'
+            ? error.toJSON()
+            : {
+                message: error.message,
+                code: error.code,
+                stack: error.stack
+              }
+        ))
 
         await this.#storage.failJob(id, message, this.#workerId, serializedError, this.#resultTTL)
 
