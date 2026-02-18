@@ -2,8 +2,6 @@
 name: Run Tests
 on:
   push:
-    branches:
-      - main
   pull_request:
   workflow_dispatch:
 jobs:
@@ -48,11 +46,10 @@ jobs:
       - name: Install dependencies
         run: pnpm install --frozen-lockfile
       - name: Run Tests (Redis)
-        run: 'pnpm run ci'
+        run: "pnpm run ci"
         env:
           REDIS_URL: redis://localhost:6379
       - name: Run Tests (Valkey)
-        run: 'pnpm run ci'
+        run: "pnpm run ci"
         env:
           REDIS_URL: redis://localhost:6380
-
