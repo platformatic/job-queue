@@ -350,6 +350,103 @@ describe('Queue', () => {
     })
   })
 
+  describe('result TTL override', () => {
+    it('should override default TTL for completed jobs', async () => {
+      queue.execute(async (job: Job<{ value: number }>) => {
+        return { result: job.payload.value * 2 }
+      })
+
+      await queue.start()
+
+      const completedPromise = once(queue, 'completed')
+      await queue.enqueue('job-1', { value: 21 }, { resultTTL: 20 })
+      await completedPromise
+
+      assert.deepStrictEqual(await queue.getResult('job-1'), { result: 42 })
+
+      await sleep(60)
+
+      const expiredResult = await queue.getResult('job-1')
+      assert.strictEqual(expiredResult, null)
+    })
+
+    it('should use the first accepted TTL when duplicates provide different values', async () => {
+      const localStorage = new MemoryStorage()
+      const localQueue = new Queue<{ value: number }, { result: number }>({
+        storage: localStorage,
+        resultTTL: 5000,
+        visibilityTimeout: 5000
+      })
+
+      localQueue.execute(async (job: Job<{ value: number }>) => {
+        return { result: job.payload.value * 2 }
+      })
+
+      const first = await localQueue.enqueue('job-1', { value: 21 }, { resultTTL: 20 })
+      const duplicate = await localQueue.enqueue('job-1', { value: 21 }, { resultTTL: 5000 })
+
+      assert.strictEqual(first.status, 'queued')
+      assert.strictEqual(duplicate.status, 'duplicate')
+
+      await localQueue.start()
+      await once(localQueue, 'completed')
+
+      await sleep(60)
+
+      const expiredResult = await localQueue.getResult('job-1')
+      assert.strictEqual(expiredResult, null)
+
+      await localQueue.stop()
+    })
+
+    it('should use producer default resultTTL when no per-job override is provided', async () => {
+      const sharedStorage = new MemoryStorage()
+
+      const producerOnlyQueue = new Queue<{ value: number }, { result: number }>({
+        storage: sharedStorage,
+        resultTTL: 20,
+        visibilityTimeout: 5000
+      })
+
+      await producerOnlyQueue.start()
+      await producerOnlyQueue.enqueue('job-1', { value: 21 })
+      await producerOnlyQueue.stop()
+
+      const consumerOnlyQueue = new Queue<{ value: number }, { result: number }>({
+        storage: sharedStorage,
+        resultTTL: 5000,
+        visibilityTimeout: 5000
+      })
+
+      consumerOnlyQueue.execute(async (job: Job<{ value: number }>) => {
+        return { result: job.payload.value * 2 }
+      })
+
+      await consumerOnlyQueue.start()
+      await once(consumerOnlyQueue, 'completed')
+
+      assert.deepStrictEqual(await consumerOnlyQueue.getResult('job-1'), { result: 42 })
+
+      await sleep(60)
+
+      const expiredResult = await consumerOnlyQueue.getResult('job-1')
+      assert.strictEqual(expiredResult, null)
+
+      await consumerOnlyQueue.stop()
+    })
+
+    it('should reject invalid per-job resultTTL values', async () => {
+      await assert.rejects(
+        queue.enqueue('job-1', { value: 1 }, { resultTTL: 0 }),
+        (err: Error) => {
+          assert.strictEqual(err.name, 'TypeError')
+          assert.match(err.message, /resultTTL must be a positive integer/)
+          return true
+        }
+      )
+    })
+  })
+
   describe('concurrency', () => {
     it('should process multiple jobs concurrently', async () => {
       const concurrentQueue = new Queue<{ value: number }, { result: number }>({

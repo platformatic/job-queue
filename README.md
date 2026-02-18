@@ -44,9 +44,15 @@ await queue.start()
 // Enqueue jobs
 await queue.enqueue('email-1', { email: 'user@example.com' })
 
+// Optional per-job TTL override for cached result/error
+await queue.enqueue('email-ttl', { email: 'ttl@example.com' }, {
+  resultTTL: 5 * 60 * 1000 // 5 minutes
+})
+
 // Or wait for the result
 const result = await queue.enqueueAndWait('email-2', { email: 'another@example.com' }, {
-  timeout: 30000
+  timeout: 30000,
+  resultTTL: 24 * 60 * 60 * 1000 // keep this result for 24h
 })
 console.log('Result:', result) // { sent: true }
 
@@ -109,7 +115,10 @@ queue.execute(async (job) => {
 Enqueue a job (fire-and-forget).
 
 ```typescript
-const result = await queue.enqueue('job-123', { data: 'value' })
+const result = await queue.enqueue('job-123', { data: 'value' }, {
+  maxAttempts: 5,
+  resultTTL: 60_000 // optional per-job TTL override (ms)
+})
 
 // result.status can be:
 // - 'queued': Job was added to the queue
@@ -124,11 +133,17 @@ Enqueue a job and wait for the result.
 ```typescript
 const result = await queue.enqueueAndWait('job-123', payload, {
   timeout: 30000,      // Timeout in milliseconds
-  maxAttempts: 5       // Override default max retries
+  maxAttempts: 5,      // Override default max retries
+  resultTTL: 300000    // Optional per-job TTL override (ms)
 })
 ```
 
 Throws `TimeoutError` if the job doesn't complete within the timeout.
+
+`resultTTL` behavior:
+- If provided in `enqueue()` / `enqueueAndWait()`, it overrides the queue default for that job.
+- If omitted, the producer uses the queue default `resultTTL` at enqueue time.
+- For duplicate IDs, the first accepted enqueue defines the TTL for that job.
 
 ##### `queue.cancel(id): Promise<CancelResult>`
 

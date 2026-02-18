@@ -10,6 +10,7 @@ export interface QueueMessage<TPayload> {
   createdAt: number
   attempts: number
   maxAttempts: number
+  resultTTL?: number
   correlationId?: string
 }
 
@@ -44,6 +45,7 @@ export interface MessageStatus<TResult = unknown> {
  */
 export interface EnqueueOptions {
   maxAttempts?: number
+  resultTTL?: number
 }
 
 /**

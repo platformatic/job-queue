@@ -339,7 +339,7 @@ export class RedisStorage implements Storage {
     message: Buffer,
     workerId: string,
     result: Buffer,
-    resultTtlMs: number
+    resultTTL: number
   ): Promise<void> {
     const timestamp = Date.now()
     const state = `completed:${timestamp}`
@@ -354,7 +354,7 @@ export class RedisStorage implements Storage {
       message,
       state,
       result,
-      resultTtlMs.toString()
+      resultTTL.toString()
     )
 
     // Notify subscribers and publish event
@@ -367,7 +367,7 @@ export class RedisStorage implements Storage {
     message: Buffer,
     workerId: string,
     error: Buffer,
-    errorTtlMs: number
+    errorTTL: number
   ): Promise<void> {
     const timestamp = Date.now()
     const state = `failed:${timestamp}`
@@ -382,7 +382,7 @@ export class RedisStorage implements Storage {
       message,
       state,
       error,
-      errorTtlMs.toString()
+      errorTTL.toString()
     )
 
     // Notify subscribers and publish event

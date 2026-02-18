@@ -164,6 +164,7 @@ export class Consumer<TPayload, TResult> extends EventEmitter<ConsumerEvents<TRe
   async #processJob (message: Buffer): Promise<void> {
     const queueMessage = this.#deserializeMessage(message)
     const { id, payload, attempts, maxAttempts } = queueMessage
+    const resultTTL = queueMessage.resultTTL ?? this.#resultTTL
 
     // Check if job was cancelled (deleted from jobs hash)
     const state = await this.#storage.getJobState(id)
@@ -204,7 +205,7 @@ export class Consumer<TPayload, TResult> extends EventEmitter<ConsumerEvents<TRe
 
       // Complete the job
       const serializedResult = this.#resultSerde.serialize(result)
-      await this.#storage.completeJob(id, message, this.#workerId, serializedResult, this.#resultTTL)
+      await this.#storage.completeJob(id, message, this.#workerId, serializedResult, resultTTL)
 
       this.emit('completed', id, result)
     } catch (err) {
@@ -238,7 +239,7 @@ export class Consumer<TPayload, TResult> extends EventEmitter<ConsumerEvents<TRe
               }
         ))
 
-        await this.#storage.failJob(id, message, this.#workerId, serializedError, this.#resultTTL)
+        await this.#storage.failJob(id, message, this.#workerId, serializedError, resultTTL)
 
         this.emit('failed', id, maxRetriesError)
       }
