@@ -1,5 +1,8 @@
 import { describe, it, beforeEach, afterEach } from 'node:test'
 import assert from 'node:assert'
+import { mkdtemp, rm } from 'node:fs/promises'
+import { join } from 'node:path'
+import { tmpdir } from 'node:os'
 import { setTimeout as sleep } from 'node:timers/promises'
 import { createFileStorage } from './fixtures/file.ts'
 import { FileStorage } from '../src/storage/file.ts'
@@ -389,6 +392,128 @@ describe('FileStorage', () => {
       assert.strictEqual(await storage.getJobState('job-1'), null)
       assert.strictEqual(await storage.getResult('job-1'), null)
       assert.deepStrictEqual(await storage.getWorkers(), [])
+    })
+  })
+
+  describe('leader election', () => {
+    let basePath: string
+    let leaderStorage: FileStorage
+    let leaderCleanup: () => Promise<void>
+
+    beforeEach(async () => {
+      basePath = await mkdtemp(join(tmpdir(), 'job-queue-leader-test-'))
+      const result = await createFileStorage({ basePath })
+      leaderStorage = result.storage
+      leaderCleanup = result.cleanup
+      await leaderStorage.connect()
+    })
+
+    afterEach(async () => {
+      await leaderStorage.clear()
+      await leaderStorage.disconnect()
+      await leaderCleanup()
+    })
+
+    it('should acquire lock when no lock exists', async () => {
+      const acquired = await leaderStorage.acquireLeaderLock('test-lock', 'owner-1', 10000)
+      assert.strictEqual(acquired, true)
+    })
+
+    it('should fail to acquire lock held by another', async () => {
+      await leaderStorage.acquireLeaderLock('test-lock', 'owner-1', 10000)
+      const acquired = await leaderStorage.acquireLeaderLock('test-lock', 'owner-2', 10000)
+      assert.strictEqual(acquired, false)
+    })
+
+    it('should acquire lock when expired', async () => {
+      await leaderStorage.acquireLeaderLock('test-lock', 'owner-1', 10)
+      await sleep(50)
+      const acquired = await leaderStorage.acquireLeaderLock('test-lock', 'owner-2', 10000)
+      assert.strictEqual(acquired, true)
+    })
+
+    it('should renew lock by same owner', async () => {
+      await leaderStorage.acquireLeaderLock('test-lock', 'owner-1', 10000)
+      const renewed = await leaderStorage.renewLeaderLock('test-lock', 'owner-1', 10000)
+      assert.strictEqual(renewed, true)
+    })
+
+    it('should fail to renew lock by different owner', async () => {
+      await leaderStorage.acquireLeaderLock('test-lock', 'owner-1', 10000)
+      const renewed = await leaderStorage.renewLeaderLock('test-lock', 'owner-2', 10000)
+      assert.strictEqual(renewed, false)
+    })
+
+    it('should release lock by same owner and make it acquirable', async () => {
+      await leaderStorage.acquireLeaderLock('test-lock', 'owner-1', 10000)
+      const released = await leaderStorage.releaseLeaderLock('test-lock', 'owner-1')
+      assert.strictEqual(released, true)
+
+      const acquired = await leaderStorage.acquireLeaderLock('test-lock', 'owner-2', 10000)
+      assert.strictEqual(acquired, true)
+    })
+
+    it('should fail to release lock by different owner', async () => {
+      await leaderStorage.acquireLeaderLock('test-lock', 'owner-1', 10000)
+      const released = await leaderStorage.releaseLeaderLock('test-lock', 'owner-2')
+      assert.strictEqual(released, false)
+    })
+  })
+
+  describe('cleanup leader behavior', () => {
+    it('should clean up expired results with only one leader among two instances', async () => {
+      const basePath = await mkdtemp(join(tmpdir(), 'job-queue-cleanup-test-'))
+
+      const { storage: storage1 } = await createFileStorage({ basePath })
+      const { storage: storage2 } = await createFileStorage({ basePath })
+
+      await storage1.connect()
+      await storage2.connect()
+
+      try {
+        // Store a result with very short TTL (50ms)
+        await storage1.setResult('job-1', Buffer.from('result-1'), 50)
+
+        // Wait for result to expire and cleanup to run
+        await sleep(300)
+
+        // Result should be cleaned up by whichever instance is leader
+        const result = await storage1.getResult('job-1')
+        assert.strictEqual(result, null, 'expired result should be cleaned up')
+      } finally {
+        await storage1.disconnect()
+        await storage2.disconnect()
+        await rm(basePath, { recursive: true, force: true })
+      }
+    })
+
+    it('should failover cleanup when leader disconnects', async () => {
+      const basePath = await mkdtemp(join(tmpdir(), 'job-queue-failover-test-'))
+
+      const { storage: storage1 } = await createFileStorage({ basePath })
+      await storage1.connect()
+
+      // storage1 is now leader. Disconnect it.
+      await storage1.disconnect()
+
+      // Connect storage2 - it should become leader
+      const { storage: storage2 } = await createFileStorage({ basePath })
+      await storage2.connect()
+
+      try {
+        // Store a result with very short TTL (50ms)
+        await storage2.setResult('job-2', Buffer.from('result-2'), 50)
+
+        // Wait for result to expire and cleanup to run
+        await sleep(300)
+
+        // Result should be cleaned up by storage2 as the new leader
+        const result = await storage2.getResult('job-2')
+        assert.strictEqual(result, null, 'expired result should be cleaned up by new leader')
+      } finally {
+        await storage2.disconnect()
+        await rm(basePath, { recursive: true, force: true })
+      }
     })
   })
 })
