@@ -231,7 +231,7 @@ export interface Storage {
     message: Buffer,
     workerId: string,
     result: Buffer,
-    resultTtlMs: number
+    resultTTL: number
   ): Promise<void>
 
   /**
@@ -246,7 +246,7 @@ export interface Storage {
     message: Buffer,
     workerId: string,
     error: Buffer,
-    errorTtlMs: number
+    errorTTL: number
   ): Promise<void>
 
   /**

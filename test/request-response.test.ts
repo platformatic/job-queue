@@ -194,6 +194,27 @@ describe('Request/Response', () => {
       )
     })
 
+    it('should apply per-job resultTTL to failed job errors', async () => {
+      queue.execute(async () => {
+        throw new Error('Job failed')
+      })
+
+      await queue.start()
+
+      await assert.rejects(
+        queue.enqueueAndWait('job-1', { value: 21 }, { timeout: 5000, maxAttempts: 1, resultTTL: 20 }),
+        (err: Error) => err.name === 'JobFailedError'
+      )
+
+      const storedError = await storage.getError('job-1')
+      assert.ok(storedError)
+
+      await new Promise(resolve => setTimeout(resolve, 60))
+
+      const expiredError = await storage.getError('job-1')
+      assert.strictEqual(expiredError, null)
+    })
+
     it('should return error for already-failed job', async () => {
       queue.execute(async () => {
         throw new Error('Always fails')

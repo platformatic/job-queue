@@ -27,8 +27,9 @@ Examples of non-idempotent operations (require external safeguards):
 2. **Deduplication**: Prevent duplicate job processing using message IDs
 3. **Item Removal**: Cancel pending jobs while maintaining deduplication integrity
 4. **Result Cache**: Retrieve processed job results within a configurable TTL
-5. **Type Stripping**: Native Node.js TypeScript execution (22.6+)
-6. **Flexible Modes**: Producer, consumer, or combined operation
+5. **Per-Job TTL Override**: Allow callers to override result/error TTL for specific jobs
+6. **Type Stripping**: Native Node.js TypeScript execution (22.6+)
+7. **Flexible Modes**: Producer, consumer, or combined operation
 
 ## Invocation Modes
 
@@ -80,6 +81,18 @@ The request/response mode is optimized for low latency:
 3. **Cached results**: If the job was already completed, the cached result is returned immediately without waiting.
 4. **Subscribe-first**: Subscription happens before enqueue to eliminate race conditions.
 
+### Per-Job TTL Override
+
+By default, results and errors use `QueueConfig.resultTTL`. Some jobs need different retention (for example, very large results should expire quickly, while expensive jobs may need longer caching).
+
+Proposed behavior:
+
+- Add optional `resultTTL` to `enqueue()` and `enqueueAndWait()` options.
+- Persist this TTL inside the queued message (`resultTTL`) so workers can apply it when storing success/error outcomes.
+- Resolve TTL at enqueue time: `options.resultTTL ?? QueueConfig.resultTTL`, then persist it in the message.
+- Validate TTL at enqueue time (`> 0` and finite integer).
+- **Deduplication rule**: for duplicates, the first accepted enqueue defines TTL; later duplicates do not mutate it.
+
 ## Architecture
 
 ### Redis Data Structures
@@ -101,6 +114,7 @@ interface QueueMessage<T> {
   createdAt: number;             // Unix timestamp ms
   attempts: number;              // Retry count
   maxAttempts: number;           // Maximum retry attempts
+  resultTTL?: number;            // Resolved TTL (producer default or override); optional for backward compatibility
   correlationId?: string;        // For request/response pattern
 }
 ```
@@ -318,7 +332,7 @@ interface Storage {
     message: Buffer,
     workerId: string,
     result: Buffer,
-    resultTtlMs: number
+    resultTTL: number
   ): Promise<void>;
 
   /**
@@ -333,7 +347,7 @@ interface Storage {
     message: Buffer,
     workerId: string,
     error: Buffer,
-    errorTtlMs: number
+    errorTTL: number
   ): Promise<void>;
 
   /**
@@ -547,16 +561,51 @@ async notifyJobComplete(id: string, status: 'completed' | 'failed' | 'failing'):
 }
 ```
 
+**Result/Error Storage with Per-Job TTL:**
+```typescript
+async setResult(id: string, result: Buffer, ttlMs: number): Promise<void> {
+  const resultPath = this.resultPath(id);
+  const metaPath = `${resultPath}.meta.json`;
+
+  await writeFileAtomic.promise(resultPath, result);
+  await writeFileAtomic.promise(
+    metaPath,
+    Buffer.from(JSON.stringify({ expiresAt: Date.now() + ttlMs }))
+  );
+}
+
+async setError(id: string, error: Buffer, ttlMs: number): Promise<void> {
+  const errorPath = this.errorPath(id);
+  const metaPath = `${errorPath}.meta.json`;
+
+  await writeFileAtomic.promise(errorPath, error);
+  await writeFileAtomic.promise(
+    metaPath,
+    Buffer.from(JSON.stringify({ expiresAt: Date.now() + ttlMs }))
+  );
+}
+```
+
 **TTL Cleanup (Background):**
 ```typescript
 private async cleanupExpired(): Promise<void> {
-  // Results
-  for (const file of await fs.readdir(this.resultsDir)) {
-    const stat = await fs.stat(path.join(this.resultsDir, file));
-    if (Date.now() - stat.mtimeMs > this.resultTTL) {
-      await fs.unlink(path.join(this.resultsDir, file));
+  const cleanupByMeta = async (dir: string, extension: string) => {
+    for (const file of await fs.readdir(dir)) {
+      if (!file.endsWith(extension)) continue;
+
+      const filePath = path.join(dir, file);
+      const metaPath = `${filePath}.meta.json`;
+      const meta = JSON.parse(await fs.readFile(metaPath, 'utf8')) as { expiresAt: number };
+
+      if (Date.now() >= meta.expiresAt) {
+        await fs.unlink(filePath).catch(() => {});
+        await fs.unlink(metaPath).catch(() => {});
+      }
     }
-  }
+  };
+
+  await cleanupByMeta(this.resultsDir, '.result');
+  await cleanupByMeta(this.errorsDir, '.error');
 
   // Worker heartbeats
   for (const file of await fs.readdir(this.workersDir)) {
@@ -654,7 +703,7 @@ interface QueueConfig<TPayload, TResult> {
   processingQueueTTL?: number;         // TTL for processing queue keys in ms (default: 604800000 = 7 days)
 
   // Result cache options
-  resultTTL?: number;                  // TTL for stored results and errors in ms (default: 3600000 = 1 hour)
+  resultTTL?: number;                  // Default TTL for stored results and errors in ms (default: 3600000 = 1 hour)
 }
 ```
 
@@ -739,10 +788,11 @@ class Reaper<TPayload> extends EventEmitter {
 ```typescript
 interface EnqueueOptions {
   maxAttempts?: number;
+  resultTTL?: number; // Per-job result/error TTL override in ms
 }
 
 interface EnqueueAndWaitOptions extends EnqueueOptions {
-  timeout?: number;  // Max wait time in ms (default: 30000)
+  timeout?: number;   // Max wait time in ms (default: 30000)
 }
 
 type EnqueueResult =
@@ -823,8 +873,10 @@ closeWithGrace({ delay: 10000 }, async () => {
 
 ### Enqueue Flow
 
+`enqueue()` resolves and serializes `resultTTL` into the message (`options.resultTTL ?? config.resultTTL`).
+
 ```
-enqueue(id, payload)
+enqueue(id, payload, { resultTTL? })
     │
     ▼
 ┌─────────────────────────────────┐
@@ -852,6 +904,22 @@ enqueue(id, payload)
             ▼
     Return { status: 'queued' }
 ```
+
+### TTL Resolution
+
+At processing time, worker resolves TTL as:
+
+```typescript
+const ttlMs = message.resultTTL ?? config.resultTTL; // fallback for backward compatibility
+```
+
+This `ttlMs` is used for both `completeJob(..., resultTTL)` and `failJob(..., errorTTL)` so success and terminal failure follow the same retention policy. New messages always carry `resultTTL`, so producer defaults are preserved even with separate producer/consumer instances.
+
+Validation happens at enqueue time:
+
+- `resultTTL` must be an integer number of milliseconds
+- `resultTTL > 0`
+- Reject invalid values with a validation error
 
 ### Consumer Flow
 
@@ -895,10 +963,11 @@ start()
     │       │
     │       ▼
     │   ┌─────────────────────────────────┐
-    │   │ MULTI                           │
-    │   │   SET {prefix}:results:{id}     │
-    │   │       {result} EX {resultTTL}   │
-    │   │   HSET {prefix}:jobs {id}       │
+    │   │ MULTI                                           │
+    │   │   SET {prefix}:results:{id}                     │
+    │   │       {result} EX {message.resultTTL ??         │
+    │   │                    config.resultTTL}            │
+    │   │   HSET {prefix}:jobs {id}                       │
     │   │        "completed:{timestamp}"  │
     │   │   LREM {prefix}:processing:     │
     │   │        {workerId} 1 {msg}       │
@@ -935,7 +1004,7 @@ start()
 Optimized for minimal latency — pure pub/sub, no polling.
 
 ```
-enqueueAndWait(id, payload, { timeout })
+enqueueAndWait(id, payload, { timeout, resultTTL? })
     │
     ▼
 ┌─────────────────────────────────────────────┐
@@ -1350,7 +1419,10 @@ const queue = new Queue<ImageJob, ImageResult>({
 const result = await queue.enqueueAndWait(
   'img-abc123',
   { url: 'https://example.com/photo.jpg', width: 200, height: 200 },
-  { timeout: 60000 }
+  {
+    timeout: 60000,
+    resultTTL: 24 * 60 * 60 * 1000, // Keep expensive result for 24h
+  }
 );
 console.log('Thumbnail:', result.thumbnailUrl);
 

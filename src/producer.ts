@@ -1,16 +1,16 @@
-import type { Storage } from './storage/types.ts'
+import { JobFailedError, TimeoutError } from './errors.ts'
 import type { Serde } from './serde/index.ts'
+import { createJsonSerde } from './serde/index.ts'
+import type { Storage } from './storage/types.ts'
 import type {
-  QueueMessage,
-  EnqueueOptions,
-  EnqueueAndWaitOptions,
-  EnqueueResult,
   CancelResult,
+  EnqueueAndWaitOptions,
+  EnqueueOptions,
+  EnqueueResult,
   MessageStatus,
+  QueueMessage,
   SerializedError
 } from './types.ts'
-import { TimeoutError, JobFailedError } from './errors.ts'
-import { createJsonSerde } from './serde/index.ts'
 import { parseState } from './utils/state.ts'
 
 interface ProducerConfig<TPayload, TResult> {
@@ -49,13 +49,17 @@ export class Producer<TPayload, TResult> {
   ): Promise<EnqueueResult<TResult>> {
     const timestamp = Date.now()
     const maxAttempts = options?.maxAttempts ?? this.#maxRetries
+    const resultTTL = options?.resultTTL ?? this.#resultTTL
+
+    this.#validateResultTTL(resultTTL)
 
     const message: QueueMessage<TPayload> = {
       id,
       payload,
       createdAt: timestamp,
       attempts: 0,
-      maxAttempts
+      maxAttempts,
+      resultTTL
     }
 
     const serialized = this.#payloadSerde.serialize(message as unknown as TPayload)
@@ -212,5 +216,11 @@ export class Producer<TPayload, TResult> {
     }
 
     return messageStatus
+  }
+
+  #validateResultTTL (resultTTL: number): void {
+    if (!Number.isFinite(resultTTL) || !Number.isInteger(resultTTL) || resultTTL <= 0) {
+      throw new TypeError('resultTTL must be a positive integer in milliseconds')
+    }
   }
 }

@@ -286,7 +286,7 @@ export class MemoryStorage implements Storage {
     message: Buffer,
     workerId: string,
     result: Buffer,
-    resultTtlMs: number
+    resultTTL: number
   ): Promise<void> {
     const timestamp = Date.now()
 
@@ -294,7 +294,7 @@ export class MemoryStorage implements Storage {
     this.#jobs.set(id, `completed:${timestamp}`)
 
     // Store result
-    await this.setResult(id, result, resultTtlMs)
+    await this.setResult(id, result, resultTTL)
 
     // Remove from processing queue
     await this.ack(id, message, workerId)
@@ -311,7 +311,7 @@ export class MemoryStorage implements Storage {
     message: Buffer,
     workerId: string,
     error: Buffer,
-    errorTtlMs: number
+    errorTTL: number
   ): Promise<void> {
     const timestamp = Date.now()
 
@@ -319,7 +319,7 @@ export class MemoryStorage implements Storage {
     this.#jobs.set(id, `failed:${timestamp}`)
 
     // Store error
-    await this.setError(id, error, errorTtlMs)
+    await this.setError(id, error, errorTTL)
 
     // Remove from processing queue
     await this.ack(id, message, workerId)
