@@ -7,13 +7,6 @@ settings:
 importers:
 
   .:
-    dependencies:
-      fast-write-atomic:
-        specifier: ^0.4.0
-        version: 0.4.0
-      iovalkey:
-        specifier: ^0.2.0
-        version: 0.2.2
     devDependencies:
       '@platformatic/flame':
         specifier: ^1.6.0
@@ -39,6 +32,13 @@ importers:
       typescript:
         specifier: ^5.7.0
         version: 5.9.3
+    optionalDependencies:
+      fast-write-atomic:
+        specifier: ^0.4.0
+        version: 0.4.0
+      iovalkey:
+        specifier: ^0.2.0
+        version: 0.2.2
 
 packages:
 
@@ -1777,7 +1777,8 @@ snapshots:
 
   '@humanwhocodes/retry@0.4.3': {}
 
-  '@ioredis/commands@1.5.0': {}
+  '@ioredis/commands@1.5.0':
+    optional: true
 
   '@isaacs/cliui@8.0.2':
     dependencies:
@@ -2196,7 +2197,8 @@ snapshots:
       strip-ansi: 6.0.1
       wrap-ansi: 7.0.0
 
-  cluster-key-slot@1.1.2: {}
+  cluster-key-slot@1.1.2:
+    optional: true
 
   color-convert@2.0.1:
     dependencies:
@@ -2256,7 +2258,8 @@ snapshots:
 
   delay@5.0.0: {}
 
-  denque@2.1.0: {}
+  denque@2.1.0:
+    optional: true
 
   dequal@2.0.3: {}
 
@@ -2568,7 +2571,8 @@ snapshots:
 
   fast-uri@3.1.0: {}
 
-  fast-write-atomic@0.4.0: {}
+  fast-write-atomic@0.4.0:
+    optional: true
 
   fastify@5.7.4:
     dependencies:
@@ -2756,6 +2760,7 @@ snapshots:
       standard-as-callback: 2.1.0
     transitivePeerDependencies:
       - supports-color
+    optional: true
 
   ipaddr.js@2.3.0: {}
 
@@ -2951,9 +2956,11 @@ snapshots:
     dependencies:
       p-locate: 5.0.0
 
-  lodash.defaults@4.2.0: {}
+  lodash.defaults@4.2.0:
+    optional: true
 
-  lodash.isarguments@3.1.0: {}
+  lodash.isarguments@3.1.0:
+    optional: true
 
   lodash.merge@4.6.2: {}
 
@@ -3174,11 +3181,13 @@ snapshots:
 
   real-require@0.2.0: {}
 
-  redis-errors@1.2.0: {}
+  redis-errors@1.2.0:
+    optional: true
 
   redis-parser@3.0.0:
     dependencies:
       redis-errors: 1.2.0
+    optional: true
 
   reflect.getprototypeof@1.0.10:
     dependencies:
@@ -3325,7 +3334,8 @@ snapshots:
 
   stable-hash@0.0.5: {}
 
-  standard-as-callback@2.1.0: {}
+  standard-as-callback@2.1.0:
+    optional: true
 
   stop-iteration-iterator@1.1.0:
     dependencies:
