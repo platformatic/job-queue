@@ -70,10 +70,12 @@ describe('Queue', () => {
       })
 
       await queue.start()
+
+      const completedPromise = once(queue, 'completed')
       await queue.enqueue('job-1', { value: 21 })
 
       // Wait for completed event
-      await once(queue, 'completed')
+      await completedPromise
 
       assert.strictEqual(processed, true)
     })
@@ -84,9 +86,11 @@ describe('Queue', () => {
       })
 
       await queue.start()
+
+      const completedPromise = once(queue, 'completed')
       await queue.enqueue('job-1', { value: 21 })
 
-      const [completedId, completedResult] = await once(queue, 'completed')
+      const [completedId, completedResult] = await completedPromise
 
       assert.strictEqual(completedId, 'job-1')
       assert.deepStrictEqual(completedResult, { result: 42 })
@@ -98,10 +102,12 @@ describe('Queue', () => {
       })
 
       await queue.start()
+
+      const completedPromise = once(queue, 'completed')
       await queue.enqueue('job-1', { value: 21 })
 
       // Wait for completed event
-      await once(queue, 'completed')
+      await completedPromise
 
       const result = await queue.getResult('job-1')
       assert.deepStrictEqual(result, { result: 42 })
@@ -113,10 +119,12 @@ describe('Queue', () => {
       })
 
       await queue.start()
+
+      const completedPromise = once(queue, 'completed')
       await queue.enqueue('job-1', { value: 21 })
 
       // Wait for completed event
-      await once(queue, 'completed')
+      await completedPromise
 
       const duplicateResult = await queue.enqueue('job-1', { value: 999 })
       assert.strictEqual(duplicateResult.status, 'completed')
@@ -187,10 +195,12 @@ describe('Queue', () => {
       })
 
       await queue.start()
+
+      const completedPromise = once(queue, 'completed')
       await queue.enqueue('job-1', { value: 1 })
 
       // Wait for completed event (after retries succeed)
-      await once(queue, 'completed')
+      await completedPromise
 
       assert.strictEqual(attempts, 3)
 
@@ -204,10 +214,12 @@ describe('Queue', () => {
       })
 
       await queue.start()
+
+      const failedPromise = once(queue, 'failed')
       await queue.enqueue('job-1', { value: 1 }, { maxAttempts: 2 })
 
       // Wait for failed event
-      const [failedId, failedError] = await once(queue, 'failed')
+      const [failedId, failedError] = await failedPromise
 
       assert.strictEqual(failedId, 'job-1')
       assert.ok(failedError)
@@ -293,10 +305,12 @@ describe('Queue', () => {
       })
 
       await queue.start()
+
+      const completedPromise = once(queue, 'completed')
       await queue.enqueue('job-1', { value: 21 })
 
       // Wait for completed event
-      await once(queue, 'completed')
+      await completedPromise
 
       const status = await queue.getStatus('job-1')
       assert.ok(status)
