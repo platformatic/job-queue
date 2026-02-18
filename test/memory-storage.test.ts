@@ -157,7 +157,7 @@ describe('MemoryStorage', () => {
   describe('results', () => {
     it('should store and retrieve result', async () => {
       const result = Buffer.from(JSON.stringify({ success: true }))
-      await storage.setResult('job-1', result, 60000)
+      await storage.setResult('job-1', result)
 
       const retrieved = await storage.getResult('job-1')
       assert.deepStrictEqual(retrieved, result)
@@ -169,21 +169,26 @@ describe('MemoryStorage', () => {
     })
 
     it('should return null for expired result', async () => {
+      const shortTtlStorage = new MemoryStorage({ resultTTL: 1 })
+      await shortTtlStorage.connect()
+
       const result = Buffer.from('expired')
-      await storage.setResult('job-1', result, 1) // 1ms TTL
+      await shortTtlStorage.setResult('job-1', result)
 
       // Wait for expiration
       await sleep(10)
 
-      const retrieved = await storage.getResult('job-1')
+      const retrieved = await shortTtlStorage.getResult('job-1')
       assert.strictEqual(retrieved, null)
+
+      await shortTtlStorage.disconnect()
     })
   })
 
   describe('errors', () => {
     it('should store and retrieve error', async () => {
       const error = Buffer.from(JSON.stringify({ message: 'Something failed' }))
-      await storage.setError('job-1', error, 60000)
+      await storage.setError('job-1', error)
 
       const retrieved = await storage.getError('job-1')
       assert.deepStrictEqual(retrieved, error)
@@ -330,7 +335,7 @@ describe('MemoryStorage', () => {
         notified = true
       })
 
-      await storage.completeJob('job-1', message, 'worker-1', result, 60000)
+      await storage.completeJob('job-1', message, 'worker-1', result)
 
       // Verify state
       const state = await storage.getJobState('job-1')
@@ -361,7 +366,7 @@ describe('MemoryStorage', () => {
         notifiedStatus = status
       })
 
-      await storage.failJob('job-1', message, 'worker-1', error, 60000)
+      await storage.failJob('job-1', message, 'worker-1', error)
 
       // Verify state
       const state = await storage.getJobState('job-1')
@@ -398,7 +403,7 @@ describe('MemoryStorage', () => {
   describe('clear', () => {
     it('should clear all data', async () => {
       await storage.enqueue('job-1', Buffer.from('test'), Date.now())
-      await storage.setResult('job-1', Buffer.from('result'), 60000)
+      await storage.setResult('job-1', Buffer.from('result'))
       await storage.registerWorker('worker-1', 60000)
 
       storage.clear()

@@ -1,4 +1,4 @@
-import { mkdir, readdir, readFile, rename, unlink, watch, rm } from 'node:fs/promises'
+import { mkdir, readdir, readFile, rename, stat, unlink, watch, rm } from 'node:fs/promises'
 import { join } from 'node:path'
 import { EventEmitter } from 'node:events'
 import fastWriteAtomic from 'fast-write-atomic'
@@ -8,6 +8,7 @@ const writeFileAtomic = fastWriteAtomic.promise
 
 interface FileStorageConfig {
   basePath: string
+  resultTTL?: number
 }
 
 interface DequeueWaiter {
@@ -30,6 +31,7 @@ export class FileStorage implements Storage {
   #workersPath: string
   #notifyPath: string
 
+  #resultTTL: number
   #sequence = 0
   #eventEmitter = new EventEmitter({ captureRejections: true })
   #notifyEmitter = new EventEmitter({ captureRejections: true })
@@ -42,6 +44,7 @@ export class FileStorage implements Storage {
 
   constructor (config: FileStorageConfig) {
     this.#basePath = config.basePath
+    this.#resultTTL = config.resultTTL ?? 3600000
     this.#queuePath = join(this.#basePath, 'queue')
     this.#processingPath = join(this.#basePath, 'processing')
     this.#jobsPath = join(this.#basePath, 'jobs')
@@ -71,14 +74,17 @@ export class FileStorage implements Storage {
     // Initialize sequence number from existing queue files
     await this.#initSequence()
 
+    // Clean up expired results/errors from previous runs
+    await this.#cleanupExpiredResults().catch(() => {})
+
     // Start watching directories
     this.#watchAbortController = new AbortController()
     this.#startQueueWatcher()
     this.#startNotifyWatcher()
 
-    // Start cleanup interval
+    // Start cleanup interval for workers only
     this.#cleanupInterval = setInterval(() => {
-      this.#cleanupExpired().catch(() => {})
+      this.#cleanupExpiredWorkers().catch(() => {})
     }, 1000)
 
     this.#connected = true
@@ -347,63 +353,40 @@ export class FileStorage implements Storage {
     return result
   }
 
-  async setResult (id: string, result: Buffer, ttlMs: number): Promise<void> {
+  async setResult (id: string, result: Buffer): Promise<void> {
     const filePath = join(this.#resultsPath, `${id}.result`)
-    // Store TTL expiry time in a companion file
-    const ttlPath = join(this.#resultsPath, `${id}.ttl`)
-    const expiresAt = Date.now() + ttlMs
-
-    await Promise.all([
-      writeFileAtomic(filePath, result),
-      writeFileAtomic(ttlPath, expiresAt.toString())
-    ])
+    await writeFileAtomic(filePath, result)
   }
 
   async getResult (id: string): Promise<Buffer | null> {
+    const filePath = join(this.#resultsPath, `${id}.result`)
     try {
-      const ttlPath = join(this.#resultsPath, `${id}.ttl`)
-      const expiresAt = parseInt(await readFile(ttlPath, 'utf8'), 10)
-
-      if (Date.now() > expiresAt) {
-        // Expired - delete files
-        await Promise.all([
-          unlink(join(this.#resultsPath, `${id}.result`)).catch(() => {}),
-          unlink(ttlPath).catch(() => {})
-        ])
+      const fileStat = await stat(filePath)
+      if (Date.now() > fileStat.mtimeMs + this.#resultTTL) {
+        // Expired - delete file
+        await unlink(filePath).catch(() => {})
         return null
       }
-
-      return await readFile(join(this.#resultsPath, `${id}.result`))
+      return await readFile(filePath)
     } catch {
       return null
     }
   }
 
-  async setError (id: string, error: Buffer, ttlMs: number): Promise<void> {
+  async setError (id: string, error: Buffer): Promise<void> {
     const filePath = join(this.#errorsPath, `${id}.error`)
-    const ttlPath = join(this.#errorsPath, `${id}.ttl`)
-    const expiresAt = Date.now() + ttlMs
-
-    await Promise.all([
-      writeFileAtomic(filePath, error),
-      writeFileAtomic(ttlPath, expiresAt.toString())
-    ])
+    await writeFileAtomic(filePath, error)
   }
 
   async getError (id: string): Promise<Buffer | null> {
+    const filePath = join(this.#errorsPath, `${id}.error`)
     try {
-      const ttlPath = join(this.#errorsPath, `${id}.ttl`)
-      const expiresAt = parseInt(await readFile(ttlPath, 'utf8'), 10)
-
-      if (Date.now() > expiresAt) {
-        await Promise.all([
-          unlink(join(this.#errorsPath, `${id}.error`)).catch(() => {}),
-          unlink(ttlPath).catch(() => {})
-        ])
+      const fileStat = await stat(filePath)
+      if (Date.now() > fileStat.mtimeMs + this.#resultTTL) {
+        await unlink(filePath).catch(() => {})
         return null
       }
-
-      return await readFile(join(this.#errorsPath, `${id}.error`))
+      return await readFile(filePath)
     } catch {
       return null
     }
@@ -515,8 +498,7 @@ export class FileStorage implements Storage {
     id: string,
     message: Buffer,
     workerId: string,
-    result: Buffer,
-    resultTtlMs: number
+    result: Buffer
   ): Promise<void> {
     const timestamp = Date.now()
 
@@ -524,7 +506,7 @@ export class FileStorage implements Storage {
     await this.setJobState(id, `completed:${timestamp}`)
 
     // Store result
-    await this.setResult(id, result, resultTtlMs)
+    await this.setResult(id, result)
 
     // Remove from processing queue
     await this.ack(id, message, workerId)
@@ -540,8 +522,7 @@ export class FileStorage implements Storage {
     id: string,
     message: Buffer,
     workerId: string,
-    error: Buffer,
-    errorTtlMs: number
+    error: Buffer
   ): Promise<void> {
     const timestamp = Date.now()
 
@@ -549,7 +530,7 @@ export class FileStorage implements Storage {
     await this.setJobState(id, `failed:${timestamp}`)
 
     // Store error
-    await this.setError(id, error, errorTtlMs)
+    await this.setError(id, error)
 
     // Remove from processing queue
     await this.ack(id, message, workerId)
@@ -582,23 +563,19 @@ export class FileStorage implements Storage {
     this.#eventEmitter.emit('event', id, 'failing')
   }
 
-  async #cleanupExpired (): Promise<void> {
+  async #cleanupExpiredResults (): Promise<void> {
     const now = Date.now()
 
-    // Clean expired results
+    // Clean expired results using mtime
     try {
       const resultFiles = await readdir(this.#resultsPath)
       for (const file of resultFiles) {
-        if (!file.endsWith('.ttl')) continue
-        const id = file.replace('.ttl', '')
+        if (!file.endsWith('.result')) continue
+        const filePath = join(this.#resultsPath, file)
         try {
-          const expiresAt = parseInt(
-            await readFile(join(this.#resultsPath, file), 'utf8'),
-            10
-          )
-          if (now > expiresAt) {
-            await unlink(join(this.#resultsPath, `${id}.result`)).catch(() => {})
-            await unlink(join(this.#resultsPath, file)).catch(() => {})
+          const fileStat = await stat(filePath)
+          if (now > fileStat.mtimeMs + this.#resultTTL) {
+            await unlink(filePath).catch(() => {})
           }
         } catch {
           // Ignore errors
@@ -608,20 +585,16 @@ export class FileStorage implements Storage {
       // Ignore errors
     }
 
-    // Clean expired errors
+    // Clean expired errors using mtime
     try {
       const errorFiles = await readdir(this.#errorsPath)
       for (const file of errorFiles) {
-        if (!file.endsWith('.ttl')) continue
-        const id = file.replace('.ttl', '')
+        if (!file.endsWith('.error')) continue
+        const filePath = join(this.#errorsPath, file)
         try {
-          const expiresAt = parseInt(
-            await readFile(join(this.#errorsPath, file), 'utf8'),
-            10
-          )
-          if (now > expiresAt) {
-            await unlink(join(this.#errorsPath, `${id}.error`)).catch(() => {})
-            await unlink(join(this.#errorsPath, file)).catch(() => {})
+          const fileStat = await stat(filePath)
+          if (now > fileStat.mtimeMs + this.#resultTTL) {
+            await unlink(filePath).catch(() => {})
           }
         } catch {
           // Ignore errors
@@ -631,7 +604,31 @@ export class FileStorage implements Storage {
       // Ignore errors
     }
 
-    // Clean expired workers
+    // Clean up leftover .ttl companion files from previous versions
+    try {
+      const resultTtlFiles = await readdir(this.#resultsPath)
+      for (const file of resultTtlFiles) {
+        if (!file.endsWith('.ttl')) continue
+        await unlink(join(this.#resultsPath, file)).catch(() => {})
+      }
+    } catch {
+      // Ignore errors
+    }
+
+    try {
+      const errorTtlFiles = await readdir(this.#errorsPath)
+      for (const file of errorTtlFiles) {
+        if (!file.endsWith('.ttl')) continue
+        await unlink(join(this.#errorsPath, file)).catch(() => {})
+      }
+    } catch {
+      // Ignore errors
+    }
+  }
+
+  async #cleanupExpiredWorkers (): Promise<void> {
+    const now = Date.now()
+
     try {
       const workerFiles = await readdir(this.#workersPath)
       for (const file of workerFiles) {

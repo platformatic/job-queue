@@ -1,6 +1,10 @@
 import { EventEmitter } from 'node:events'
 import type { Storage } from './types.ts'
 
+interface MemoryStorageConfig {
+  resultTTL?: number
+}
+
 interface StoredResult {
   data: Buffer
   expiresAt: number
@@ -30,8 +34,10 @@ export class MemoryStorage implements Storage {
   #notifyEmitter = new EventEmitter({ captureRejections: true })
   #cleanupInterval: ReturnType<typeof setInterval> | null = null
   #dequeueWaiters: DequeueWaiter[] = []
+  #resultTTL: number
 
-  constructor () {
+  constructor (config: MemoryStorageConfig = {}) {
+    this.#resultTTL = config.resultTTL ?? 3600000
     // Disable max listeners warning for high-throughput scenarios
     this.#eventEmitter.setMaxListeners(0)
     this.#notifyEmitter.setMaxListeners(0)
@@ -185,10 +191,10 @@ export class MemoryStorage implements Storage {
     return result
   }
 
-  async setResult (id: string, result: Buffer, ttlMs: number): Promise<void> {
+  async setResult (id: string, result: Buffer): Promise<void> {
     this.#results.set(id, {
       data: result,
-      expiresAt: Date.now() + ttlMs
+      expiresAt: Date.now() + this.#resultTTL
     })
   }
 
@@ -202,10 +208,10 @@ export class MemoryStorage implements Storage {
     return stored.data
   }
 
-  async setError (id: string, error: Buffer, ttlMs: number): Promise<void> {
+  async setError (id: string, error: Buffer): Promise<void> {
     this.#errors.set(id, {
       data: error,
-      expiresAt: Date.now() + ttlMs
+      expiresAt: Date.now() + this.#resultTTL
     })
   }
 
@@ -285,8 +291,7 @@ export class MemoryStorage implements Storage {
     id: string,
     message: Buffer,
     workerId: string,
-    result: Buffer,
-    resultTtlMs: number
+    result: Buffer
   ): Promise<void> {
     const timestamp = Date.now()
 
@@ -294,7 +299,7 @@ export class MemoryStorage implements Storage {
     this.#jobs.set(id, `completed:${timestamp}`)
 
     // Store result
-    await this.setResult(id, result, resultTtlMs)
+    await this.setResult(id, result)
 
     // Remove from processing queue
     await this.ack(id, message, workerId)
@@ -310,8 +315,7 @@ export class MemoryStorage implements Storage {
     id: string,
     message: Buffer,
     workerId: string,
-    error: Buffer,
-    errorTtlMs: number
+    error: Buffer
   ): Promise<void> {
     const timestamp = Date.now()
 
@@ -319,7 +323,7 @@ export class MemoryStorage implements Storage {
     this.#jobs.set(id, `failed:${timestamp}`)
 
     // Store error
-    await this.setError(id, error, errorTtlMs)
+    await this.setError(id, error)
 
     // Remove from processing queue
     await this.ack(id, message, workerId)

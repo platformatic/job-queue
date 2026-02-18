@@ -10,6 +10,7 @@ const __dirname = dirname(fileURLToPath(import.meta.url))
 interface RedisStorageConfig {
   url?: string
   keyPrefix?: string
+  resultTTL?: number
 }
 
 interface ScriptSHAs {
@@ -28,6 +29,7 @@ interface ScriptSHAs {
 export class RedisStorage implements Storage {
   #url: string
   #keyPrefix: string
+  #resultTTL: number
   #client: Redis | null = null
   #blockingClient: Redis | null = null // Single blocking client for BLMOVE
   #subscriber: Redis | null = null
@@ -39,6 +41,7 @@ export class RedisStorage implements Storage {
   constructor (config: RedisStorageConfig = {}) {
     this.#url = config.url ?? process.env.REDIS_URL ?? 'redis://localhost:6379'
     this.#keyPrefix = config.keyPrefix ?? 'jq:'
+    this.#resultTTL = config.resultTTL ?? 3600000
 
     // Disable max listeners warning for high-throughput scenarios
     this.#eventEmitter.setMaxListeners(0)
@@ -245,10 +248,9 @@ export class RedisStorage implements Storage {
     return result
   }
 
-  async setResult (id: string, result: Buffer, ttlMs: number): Promise<void> {
+  async setResult (id: string, result: Buffer): Promise<void> {
     await this.#client!.hset(this.#resultsKey(), id, result)
-    // Note: HEXPIRE is not widely supported, so we set TTL on the whole hash
-    // For production, consider using separate keys per result
+    await this.#client!.pexpire(this.#resultsKey(), this.#resultTTL)
   }
 
   async getResult (id: string): Promise<Buffer | null> {
@@ -256,8 +258,9 @@ export class RedisStorage implements Storage {
     return result
   }
 
-  async setError (id: string, error: Buffer, ttlMs: number): Promise<void> {
+  async setError (id: string, error: Buffer): Promise<void> {
     await this.#client!.hset(this.#errorsKey(), id, error)
+    await this.#client!.pexpire(this.#errorsKey(), this.#resultTTL)
   }
 
   async getError (id: string): Promise<Buffer | null> {
@@ -337,8 +340,7 @@ export class RedisStorage implements Storage {
     id: string,
     message: Buffer,
     workerId: string,
-    result: Buffer,
-    resultTtlMs: number
+    result: Buffer
   ): Promise<void> {
     const timestamp = Date.now()
     const state = `completed:${timestamp}`
@@ -353,7 +355,7 @@ export class RedisStorage implements Storage {
       message,
       state,
       result,
-      resultTtlMs.toString()
+      this.#resultTTL.toString()
     )
 
     // Notify subscribers and publish event
@@ -365,8 +367,7 @@ export class RedisStorage implements Storage {
     id: string,
     message: Buffer,
     workerId: string,
-    error: Buffer,
-    errorTtlMs: number
+    error: Buffer
   ): Promise<void> {
     const timestamp = Date.now()
     const state = `failed:${timestamp}`
@@ -381,7 +382,7 @@ export class RedisStorage implements Storage {
       message,
       state,
       error,
-      errorTtlMs.toString()
+      this.#resultTTL.toString()
     )
 
     // Notify subscribers and publish event

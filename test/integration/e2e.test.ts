@@ -501,8 +501,7 @@ for (const { name, factory } of getStorageFactories()) {
           storage,
           workerId: 'worker-1',
           concurrency: 1,
-          visibilityTimeout: 5000,
-          resultTTL: 60000
+          visibilityTimeout: 5000
         })
 
         queue.execute(async (job: Job<TestPayload>) => {

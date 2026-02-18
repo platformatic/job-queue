@@ -85,9 +85,9 @@ export interface Storage {
   // ═══════════════════════════════════════════════════════════════════
 
   /**
-   * Store a job result with TTL.
+   * Store a job result.
    */
-  setResult (id: string, result: Buffer, ttlMs: number): Promise<void>
+  setResult (id: string, result: Buffer): Promise<void>
 
   /**
    * Retrieve a stored job result.
@@ -97,9 +97,9 @@ export interface Storage {
   getResult (id: string): Promise<Buffer | null>
 
   /**
-   * Store a job error with TTL.
+   * Store a job error.
    */
-  setError (id: string, error: Buffer, ttlMs: number): Promise<void>
+  setError (id: string, error: Buffer): Promise<void>
 
   /**
    * Retrieve a stored job error.
@@ -230,8 +230,7 @@ export interface Storage {
     id: string,
     message: Buffer,
     workerId: string,
-    result: Buffer,
-    resultTtlMs: number
+    result: Buffer
   ): Promise<void>
 
   /**
@@ -245,8 +244,7 @@ export interface Storage {
     id: string,
     message: Buffer,
     workerId: string,
-    error: Buffer,
-    errorTtlMs: number
+    error: Buffer
   ): Promise<void>
 
   /**

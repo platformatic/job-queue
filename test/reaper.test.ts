@@ -15,7 +15,6 @@ describe('Reaper', () => {
       storage,
       concurrency: 1,
       maxRetries: 3,
-      resultTTL: 60000,
       visibilityTimeout: 100 // Short timeout for testing
     })
     reaper = new Reaper({
@@ -61,7 +60,6 @@ describe('Reaper', () => {
         storage,
         concurrency: 2,
         maxRetries: 3,
-        resultTTL: 60000,
         visibilityTimeout: 500 // Longer than reaper's 100ms
       })
 

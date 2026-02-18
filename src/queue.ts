@@ -32,7 +32,6 @@ export class Queue<TPayload, TResult = void> extends EventEmitter<QueueEvents<TR
   #concurrency: number
   #blockTimeout: number
   #maxRetries: number
-  #resultTTL: number
   #visibilityTimeout: number
 
   constructor (config: QueueConfig<TPayload, TResult>) {
@@ -45,15 +44,13 @@ export class Queue<TPayload, TResult = void> extends EventEmitter<QueueEvents<TR
     this.#concurrency = config.concurrency ?? 1
     this.#blockTimeout = config.blockTimeout ?? 5
     this.#maxRetries = config.maxRetries ?? 3
-    this.#resultTTL = config.resultTTL ?? 3600000
     this.#visibilityTimeout = config.visibilityTimeout ?? 30000
 
     this.#producer = new Producer<TPayload, TResult>({
       storage: this.#storage,
       payloadSerde: this.#payloadSerde,
       resultSerde: this.#resultSerde,
-      maxRetries: this.#maxRetries,
-      resultTTL: this.#resultTTL
+      maxRetries: this.#maxRetries
     })
   }
 
@@ -164,7 +161,6 @@ export class Queue<TPayload, TResult = void> extends EventEmitter<QueueEvents<TR
       concurrency: this.#concurrency,
       blockTimeout: this.#blockTimeout,
       maxRetries: this.#maxRetries,
-      resultTTL: this.#resultTTL,
       visibilityTimeout: this.#visibilityTimeout
     })
 

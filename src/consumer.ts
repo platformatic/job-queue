@@ -13,7 +13,6 @@ interface ConsumerConfig<TPayload, TResult> {
   concurrency?: number
   blockTimeout?: number
   maxRetries?: number
-  resultTTL?: number
   visibilityTimeout?: number
 }
 
@@ -36,7 +35,6 @@ export class Consumer<TPayload, TResult> extends EventEmitter<ConsumerEvents<TRe
   #concurrency: number
   #blockTimeout: number
   #maxRetries: number
-  #resultTTL: number
   #visibilityTimeout: number
 
   #handler: JobHandler<TPayload, TResult> | null = null
@@ -54,7 +52,6 @@ export class Consumer<TPayload, TResult> extends EventEmitter<ConsumerEvents<TRe
     this.#concurrency = config.concurrency ?? 1
     this.#blockTimeout = config.blockTimeout ?? 5
     this.#maxRetries = config.maxRetries ?? 3
-    this.#resultTTL = config.resultTTL ?? 3600000
     this.#visibilityTimeout = config.visibilityTimeout ?? 30000
   }
 
@@ -202,7 +199,7 @@ export class Consumer<TPayload, TResult> extends EventEmitter<ConsumerEvents<TRe
 
       // Complete the job
       const serializedResult = this.#resultSerde.serialize(result)
-      await this.#storage.completeJob(id, message, this.#workerId, serializedResult, this.#resultTTL)
+      await this.#storage.completeJob(id, message, this.#workerId, serializedResult)
 
       this.emit('completed', id, result)
     } catch (err) {
@@ -232,7 +229,7 @@ export class Consumer<TPayload, TResult> extends EventEmitter<ConsumerEvents<TRe
           stack: error.stack
         }))
 
-        await this.#storage.failJob(id, message, this.#workerId, serializedError, this.#resultTTL)
+        await this.#storage.failJob(id, message, this.#workerId, serializedError)
 
         this.emit('failed', id, maxRetriesError)
       }

@@ -165,7 +165,7 @@ describe('FileStorage', () => {
   describe('results', () => {
     it('should store and retrieve result', async () => {
       const result = Buffer.from(JSON.stringify({ success: true }))
-      await storage.setResult('job-1', result, 60000)
+      await storage.setResult('job-1', result)
 
       const retrieved = await storage.getResult('job-1')
       assert.deepStrictEqual(retrieved, result)
@@ -177,20 +177,26 @@ describe('FileStorage', () => {
     })
 
     it('should return null for expired result', async () => {
+      const { storage: shortTtlStorage, cleanup: shortTtlCleanup } = await createFileStorage({ resultTTL: 10 })
+      await shortTtlStorage.connect()
+
       const result = Buffer.from('expiring')
-      await storage.setResult('job-1', result, 10) // 10ms TTL
+      await shortTtlStorage.setResult('job-1', result)
 
       await sleep(50)
 
-      const retrieved = await storage.getResult('job-1')
+      const retrieved = await shortTtlStorage.getResult('job-1')
       assert.strictEqual(retrieved, null)
+
+      await shortTtlStorage.disconnect()
+      await shortTtlCleanup()
     })
   })
 
   describe('errors', () => {
     it('should store and retrieve error', async () => {
       const error = Buffer.from(JSON.stringify({ message: 'Something failed' }))
-      await storage.setError('job-1', error, 60000)
+      await storage.setError('job-1', error)
 
       const retrieved = await storage.getError('job-1')
       assert.deepStrictEqual(retrieved, error)
@@ -306,7 +312,7 @@ describe('FileStorage', () => {
         storage.subscribeToJob('job-1', handler)
       )
 
-      await storage.completeJob('job-1', message, 'worker-1', result, 60000)
+      await storage.completeJob('job-1', message, 'worker-1', result)
 
       // Wait for notification
       await notificationReceived
@@ -338,7 +344,7 @@ describe('FileStorage', () => {
         storage.subscribeToJob('job-1', handler)
       )
 
-      await storage.failJob('job-1', message, 'worker-1', error, 60000)
+      await storage.failJob('job-1', message, 'worker-1', error)
 
       // Wait for notification
       const notifiedStatus = await notificationReceived
@@ -381,7 +387,7 @@ describe('FileStorage', () => {
   describe('clear', () => {
     it('should clear all data', async () => {
       await storage.enqueue('job-1', Buffer.from('test'), Date.now())
-      await storage.setResult('job-1', Buffer.from('result'), 60000)
+      await storage.setResult('job-1', Buffer.from('result'))
       await storage.registerWorker('worker-1', 60000)
 
       await storage.clear()

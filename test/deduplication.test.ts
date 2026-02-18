@@ -192,10 +192,9 @@ describe('Deduplication', () => {
 
   describe('result TTL', () => {
     it('should expire result after TTL', async () => {
-      const shortTtlStorage = new MemoryStorage()
+      const shortTtlStorage = new MemoryStorage({ resultTTL: 50 })
       const shortTtlQueue = new Queue<{ value: number }, { result: number }>({
         storage: shortTtlStorage,
-        resultTTL: 50, // 50ms TTL
         concurrency: 1,
         visibilityTimeout: 5000
       })

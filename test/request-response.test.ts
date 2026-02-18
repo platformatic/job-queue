@@ -13,7 +13,6 @@ describe('Request/Response', () => {
       storage,
       concurrency: 1,
       maxRetries: 3,
-      resultTTL: 60000,
       visibilityTimeout: 5000
     })
   })

@@ -18,7 +18,6 @@ interface ProducerConfig<TPayload, TResult> {
   payloadSerde?: Serde<TPayload>
   resultSerde?: Serde<TResult>
   maxRetries?: number
-  resultTTL?: number
 }
 
 /**
@@ -29,14 +28,12 @@ export class Producer<TPayload, TResult> {
   #payloadSerde: Serde<TPayload>
   #resultSerde: Serde<TResult>
   #maxRetries: number
-  #resultTTL: number
 
   constructor (config: ProducerConfig<TPayload, TResult>) {
     this.#storage = config.storage
     this.#payloadSerde = config.payloadSerde ?? createJsonSerde<TPayload>()
     this.#resultSerde = config.resultSerde ?? createJsonSerde<TResult>()
     this.#maxRetries = config.maxRetries ?? 3
-    this.#resultTTL = config.resultTTL ?? 3600000 // 1 hour
   }
 
   /**

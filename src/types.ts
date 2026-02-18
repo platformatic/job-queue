@@ -117,9 +117,6 @@ export interface QueueConfig<TPayload, TResult> {
 
   /** TTL for processing queue keys in ms (default: 604800000 = 7 days) */
   processingQueueTTL?: number
-
-  /** TTL for stored results and errors in ms (default: 3600000 = 1 hour) */
-  resultTTL?: number
 }
 
 /**
