@@ -1,13 +1,10 @@
-import { describe, it, beforeEach, afterEach } from 'node:test'
 import assert from 'node:assert'
+import { afterEach, beforeEach, describe, it } from 'node:test'
 import { setTimeout as sleep } from 'node:timers/promises'
 import { Queue, Reaper, RedisStorage, type Job } from '../src/index.ts'
 import { once } from './helpers/events.ts'
-import { shouldRunRedisTests } from './fixtures/redis.ts'
 
-const skipTests = !shouldRunRedisTests()
-
-describe('Reaper Leader Election', { skip: skipTests }, () => {
+describe('Reaper Leader Election', () => {
   const keyPrefix = `test:leader:${Date.now()}:`
   let storage: RedisStorage
   let storage2: RedisStorage
@@ -128,7 +125,7 @@ describe('Reaper Leader Election', { skip: skipTests }, () => {
         processCount++
         if (processCount === 1) {
           // First attempt: stall but allow cleanup via abort
-          await new Promise<void>((resolve) => {
+          await new Promise<void>(resolve => {
             abortFirstHandler = resolve
             job.signal.addEventListener('abort', () => resolve())
           })
