@@ -360,18 +360,22 @@ for (const { name, factory } of getStorageFactories()) {
     describe('reaper integration', () => {
       it('should recover stalled jobs', async () => {
         const processedJobs: string[] = []
+        const stallingJobStarted = createLatch()
+        const releaseStallingHandler = createLatch()
 
-        // First worker that will "stall"
+        // First worker that will deterministically stall
+        // Use a longer consumer visibility timeout than reaper timeout,
+        // so the reaper always handles recovery first.
         const stallingQueue = new Queue<TestPayload, TestResult>({
           storage,
           workerId: 'stalling-worker',
           concurrency: 1,
-          visibilityTimeout: 100 // Very short timeout for testing
+          visibilityTimeout: 500
         })
 
         stallingQueue.execute(async (job: Job<TestPayload>) => {
-          // This handler will be "stalled" by stopping the queue mid-processing
-          await sleep(500) // Longer than visibility timeout
+          stallingJobStarted.resolve()
+          await releaseStallingHandler.promise
           return { computed: job.payload.value * 2, workerId: 'stalling-worker' }
         })
 
@@ -394,21 +398,32 @@ for (const { name, factory } of getStorageFactories()) {
           visibilityTimeout: 100
         })
 
-        // Set up wait BEFORE starting to ensure listener is registered
+        // Set up waits BEFORE starting components that emit those events
         const jobRecovered = once(recoveryQueue, 'completed')
+        const stalledDetected = once(reaper, 'stalled')
 
+        // Start stalling worker first and ensure it has claimed the job.
+        // This avoids races where the recovery worker consumes the job first.
         await stallingQueue.start()
+        await stallingQueue.enqueue('job-1', { value: 42 })
+        await stallingJobStarted.promise
+
+        // Start recovery components after the job is definitely in processing
         await recoveryQueue.start()
         await reaper.start()
 
-        // Enqueue a job
-        await stallingQueue.enqueue('job-1', { value: 42 })
+        // Reaper must detect the stalled job and recovery worker must complete it
+        const [stalledId] = await stalledDetected
+        assert.strictEqual(stalledId, 'job-1')
 
-        // Wait for reaper to detect and recover the stalled job
-        await jobRecovered
+        const [recoveredId] = await jobRecovered
+        assert.strictEqual(recoveredId, 'job-1')
 
         // The recovery worker should have processed the job
         assert.ok(processedJobs.includes('job-1'), 'Job should have been recovered')
+
+        // Release stalled handler so queue shutdown is fast and clean
+        releaseStallingHandler.resolve()
 
         await reaper.stop()
         await stallingQueue.stop()
@@ -484,8 +499,9 @@ for (const { name, factory } of getStorageFactories()) {
         const result3 = await queue.enqueue('same-job', { value: 3 })
 
         // Let job complete
+        const completedPromise = once(queue, 'completed')
         jobCanComplete.resolve()
-        await once(queue, 'completed')
+        await completedPromise
 
         // First should be queued, rest are duplicates
         assert.strictEqual(result1.status, 'queued')

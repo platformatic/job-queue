@@ -86,8 +86,9 @@ describe('Deduplication', () => {
       }
 
       // Let job complete and wait for completion event
+      const completedPromise = once(slowQueue, 'completed')
       jobCanComplete.resolve()
-      await once(slowQueue, 'completed')
+      await completedPromise
 
       await slowQueue.stop()
     })
@@ -140,10 +141,11 @@ describe('Deduplication', () => {
       await failingQueue.start()
 
       // Enqueue and wait for failure
+      const failedPromise = once(failingQueue, 'failed')
       await failingQueue.enqueue('job-1', { value: 42 })
 
       // Wait for the job to fail
-      await once(failingQueue, 'failed')
+      await failedPromise
 
       // Enqueue same job ID - should see failed status as duplicate
       const result2 = await failingQueue.enqueue('job-1', { value: 99 })

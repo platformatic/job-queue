@@ -89,13 +89,14 @@ describe('Reaper', () => {
       await reaper.start()
 
       // Enqueue a job
+      const stalledPromise = once(reaper, 'stalled')
       const resultPromise = testQueue.enqueueAndWait('job-1', { value: 21 }, { timeout: 5000 })
 
       // Wait for first processing attempt
       await firstJobStarted
 
       // Wait for stall detection
-      await once(reaper, 'stalled')
+      await stalledPromise
 
       // Job should be reprocessed and complete
       const result = await resultPromise

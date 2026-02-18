@@ -1,14 +1,11 @@
-import { describe, it, beforeEach, afterEach } from 'node:test'
 import assert from 'node:assert'
+import { afterEach, beforeEach, describe, it } from 'node:test'
 import { setTimeout as sleep } from 'node:timers/promises'
-import { shouldRunRedisTests, createRedisStorage } from './fixtures/redis.ts'
 import { RedisStorage } from '../src/storage/redis.ts'
+import { createRedisStorage } from './fixtures/redis.ts'
 import { promisifyCallback, waitForCallbacks } from './helpers/events.ts'
 
-// Skip all tests if REDIS_URL is not set
-const skipTests = !shouldRunRedisTests()
-
-describe('RedisStorage', { skip: skipTests }, () => {
+describe('RedisStorage', () => {
   let storage: RedisStorage
 
   beforeEach(async () => {

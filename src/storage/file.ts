@@ -1,19 +1,27 @@
-import { mkdir, readdir, readFile, rename, unlink, watch, rm } from 'node:fs/promises'
-import { join } from 'node:path'
-import { EventEmitter } from 'node:events'
 import fastWriteAtomic from 'fast-write-atomic'
+import { EventEmitter } from 'node:events'
+import {
+  mkdir,
+  readdir,
+  readFile,
+  rename,
+  rm,
+  unlink,
+  watch,
+} from 'node:fs/promises'
+import { join } from 'node:path'
 import type { Storage } from './types.ts'
 
 const writeFileAtomic = fastWriteAtomic.promise
 
 interface FileStorageConfig {
-  basePath: string
+  basePath: string;
 }
 
 interface DequeueWaiter {
-  workerId: string
-  resolve: (value: Buffer | null) => void
-  timeoutId: ReturnType<typeof setTimeout>
+  workerId: string;
+  resolve: (value: Buffer | null) => void;
+  timeoutId: ReturnType<typeof setTimeout>;
 }
 
 /**
@@ -34,8 +42,18 @@ export class FileStorage implements Storage {
   #eventEmitter = new EventEmitter({ captureRejections: true })
   #notifyEmitter = new EventEmitter({ captureRejections: true })
   #dequeueWaiters: DequeueWaiter[] = []
-  #queueWatcher: AsyncIterable<{ eventType: string, filename: string | null }> | null = null
-  #notifyWatcher: AsyncIterable<{ eventType: string, filename: string | null }> | null = null
+  #drainingDequeueWaiters = false
+  #dequeueDrainRequested = false
+  #queueWatcher: AsyncIterable<{
+    eventType: string;
+    filename: string | null;
+  }> | null = null
+
+  #notifyWatcher: AsyncIterable<{
+    eventType: string;
+    filename: string | null;
+  }> | null = null
+
   #watchAbortController: AbortController | null = null
   #cleanupInterval: ReturnType<typeof setInterval> | null = null
   #connected = false
@@ -65,7 +83,7 @@ export class FileStorage implements Storage {
       mkdir(this.#resultsPath, { recursive: true }),
       mkdir(this.#errorsPath, { recursive: true }),
       mkdir(this.#workersPath, { recursive: true }),
-      mkdir(this.#notifyPath, { recursive: true })
+      mkdir(this.#notifyPath, { recursive: true }),
     ])
 
     // Initialize sequence number from existing queue files
@@ -132,9 +150,14 @@ export class FileStorage implements Storage {
 
     const runWatcher = async () => {
       try {
-        const watcher = watch(this.#queuePath, { signal: this.#watchAbortController?.signal })
+        const watcher = watch(this.#queuePath, {
+          signal: this.#watchAbortController?.signal,
+        })
         for await (const event of watcher) {
-          if (event.eventType === 'rename' && event.filename?.endsWith('.msg')) {
+          if (
+            event.eventType === 'rename' &&
+            event.filename?.endsWith('.msg')
+          ) {
             this.#notifyDequeueWaiters()
           }
         }
@@ -152,15 +175,23 @@ export class FileStorage implements Storage {
 
     const runWatcher = async () => {
       try {
-        const watcher = watch(this.#notifyPath, { signal: this.#watchAbortController?.signal })
+        const watcher = watch(this.#notifyPath, {
+          signal: this.#watchAbortController?.signal,
+        })
         for await (const event of watcher) {
-          if (event.eventType === 'rename' && event.filename?.endsWith('.notify')) {
+          if (
+            event.eventType === 'rename' &&
+            event.filename?.endsWith('.notify')
+          ) {
             // Read and process notification
             const notifyFile = join(this.#notifyPath, event.filename)
             try {
               const content = await readFile(notifyFile, 'utf8')
               const [id, status] = content.split(':')
-              this.#notifyEmitter.emit(`notify:${id}`, status as 'completed' | 'failed')
+              this.#notifyEmitter.emit(
+                `notify:${id}`,
+                status as 'completed' | 'failed'
+              )
               // Clean up notification file
               await unlink(notifyFile).catch(() => {})
             } catch {
@@ -177,16 +208,34 @@ export class FileStorage implements Storage {
   }
 
   async #notifyDequeueWaiters (): Promise<void> {
-    while (this.#dequeueWaiters.length > 0) {
-      const waiter = this.#dequeueWaiters[0]
-      const message = await this.#getNextQueueMessage(waiter.workerId)
-      if (message) {
-        this.#dequeueWaiters.shift()
-        clearTimeout(waiter.timeoutId)
-        waiter.resolve(message)
-      } else {
-        break
-      }
+    // This method may be triggered by both enqueue() and fs watcher events.
+    // Serialize runs to avoid races that can resolve/shift the wrong waiter.
+    if (this.#drainingDequeueWaiters) {
+      this.#dequeueDrainRequested = true
+      return
+    }
+
+    this.#drainingDequeueWaiters = true
+
+    try {
+      do {
+        this.#dequeueDrainRequested = false
+
+        while (this.#dequeueWaiters.length > 0) {
+          const waiter = this.#dequeueWaiters[0]
+          const message = await this.#getNextQueueMessage(waiter.workerId)
+
+          if (!message) {
+            break
+          }
+
+          this.#dequeueWaiters.shift()
+          clearTimeout(waiter.timeoutId)
+          waiter.resolve(message)
+        }
+      } while (this.#dequeueDrainRequested)
+    } finally {
+      this.#drainingDequeueWaiters = false
     }
   }
 
@@ -221,7 +270,7 @@ export class FileStorage implements Storage {
     try {
       const files = await readdir(this.#queuePath)
       return files
-        .filter(f => f.endsWith('.msg'))
+        .filter((f) => f.endsWith('.msg'))
         .sort((a, b) => {
           const seqA = parseInt(a.split('-')[0], 10)
           const seqB = parseInt(b.split('-')[0], 10)
@@ -239,7 +288,11 @@ export class FileStorage implements Storage {
     return dashIndex >= 0 ? withoutExt.substring(dashIndex + 1) : withoutExt
   }
 
-  async enqueue (id: string, message: Buffer, timestamp: number): Promise<string | null> {
+  async enqueue (
+    id: string,
+    message: Buffer,
+    timestamp: number
+  ): Promise<string | null> {
     const jobFile = join(this.#jobsPath, `${id}.state`)
 
     // Check if job already exists
@@ -267,7 +320,10 @@ export class FileStorage implements Storage {
 
     // Add to queue
     const seq = ++this.#sequence
-    const queueFile = join(this.#queuePath, `${seq.toString().padStart(12, '0')}-${id}.msg`)
+    const queueFile = join(
+      this.#queuePath,
+      `${seq.toString().padStart(12, '0')}-${id}.msg`
+    )
     await writeFileAtomic(queueFile, message)
 
     // Publish event
@@ -287,7 +343,9 @@ export class FileStorage implements Storage {
     // Wait for a job
     return new Promise((resolve) => {
       const timeoutId = setTimeout(() => {
-        const index = this.#dequeueWaiters.findIndex(w => w.resolve === resolve)
+        const index = this.#dequeueWaiters.findIndex(
+          (w) => w.resolve === resolve
+        )
         if (index !== -1) {
           this.#dequeueWaiters.splice(index, 1)
         }
@@ -305,7 +363,10 @@ export class FileStorage implements Storage {
 
     // Add back to front of queue
     const seq = ++this.#sequence
-    const queueFile = join(this.#queuePath, `${seq.toString().padStart(12, '0')}-${id}.msg`)
+    const queueFile = join(
+      this.#queuePath,
+      `${seq.toString().padStart(12, '0')}-${id}.msg`
+    )
     await writeFileAtomic(queueFile, message)
 
     // Notify waiters
@@ -341,9 +402,11 @@ export class FileStorage implements Storage {
 
   async getJobStates (ids: string[]): Promise<Map<string, string | null>> {
     const result = new Map<string, string | null>()
-    await Promise.all(ids.map(async (id) => {
-      result.set(id, await this.getJobState(id))
-    }))
+    await Promise.all(
+      ids.map(async (id) => {
+        result.set(id, await this.getJobState(id))
+      })
+    )
     return result
   }
 
@@ -355,7 +418,7 @@ export class FileStorage implements Storage {
 
     await Promise.all([
       writeFileAtomic(filePath, result),
-      writeFileAtomic(ttlPath, expiresAt.toString())
+      writeFileAtomic(ttlPath, expiresAt.toString()),
     ])
   }
 
@@ -368,7 +431,7 @@ export class FileStorage implements Storage {
         // Expired - delete files
         await Promise.all([
           unlink(join(this.#resultsPath, `${id}.result`)).catch(() => {}),
-          unlink(ttlPath).catch(() => {})
+          unlink(ttlPath).catch(() => {}),
         ])
         return null
       }
@@ -386,7 +449,7 @@ export class FileStorage implements Storage {
 
     await Promise.all([
       writeFileAtomic(filePath, error),
-      writeFileAtomic(ttlPath, expiresAt.toString())
+      writeFileAtomic(ttlPath, expiresAt.toString()),
     ])
   }
 
@@ -398,7 +461,7 @@ export class FileStorage implements Storage {
       if (Date.now() > expiresAt) {
         await Promise.all([
           unlink(join(this.#errorsPath, `${id}.error`)).catch(() => {}),
-          unlink(ttlPath).catch(() => {})
+          unlink(ttlPath).catch(() => {}),
         ])
         return null
       }
@@ -422,7 +485,10 @@ export class FileStorage implements Storage {
   async unregisterWorker (workerId: string): Promise<void> {
     await unlink(join(this.#workersPath, `${workerId}.worker`)).catch(() => {})
     // Also clean up processing queue
-    await rm(join(this.#processingPath, workerId), { recursive: true, force: true }).catch(() => {})
+    await rm(join(this.#processingPath, workerId), {
+      recursive: true,
+      force: true,
+    }).catch(() => {})
   }
 
   async getWorkers (): Promise<string[]> {
@@ -488,7 +554,10 @@ export class FileStorage implements Storage {
     }
   }
 
-  async notifyJobComplete (id: string, status: 'completed' | 'failed' | 'failing'): Promise<void> {
+  async notifyJobComplete (
+    id: string,
+    status: 'completed' | 'failed' | 'failing'
+  ): Promise<void> {
     // Write a notification file that will be picked up by the watcher
     const notifyFile = join(this.#notifyPath, `${id}-${Date.now()}.notify`)
     await writeFileAtomic(notifyFile, `${id}:${status}`)
@@ -597,7 +666,9 @@ export class FileStorage implements Storage {
             10
           )
           if (now > expiresAt) {
-            await unlink(join(this.#resultsPath, `${id}.result`)).catch(() => {})
+            await unlink(join(this.#resultsPath, `${id}.result`)).catch(
+              () => {}
+            )
             await unlink(join(this.#resultsPath, file)).catch(() => {})
           }
         } catch {
@@ -664,7 +735,7 @@ export class FileStorage implements Storage {
       rm(this.#resultsPath, { recursive: true, force: true }),
       rm(this.#errorsPath, { recursive: true, force: true }),
       rm(this.#workersPath, { recursive: true, force: true }),
-      rm(this.#notifyPath, { recursive: true, force: true })
+      rm(this.#notifyPath, { recursive: true, force: true }),
     ])
 
     // Recreate directories
@@ -675,7 +746,7 @@ export class FileStorage implements Storage {
       mkdir(this.#resultsPath, { recursive: true }),
       mkdir(this.#errorsPath, { recursive: true }),
       mkdir(this.#workersPath, { recursive: true }),
-      mkdir(this.#notifyPath, { recursive: true })
+      mkdir(this.#notifyPath, { recursive: true }),
     ])
   }
 }
