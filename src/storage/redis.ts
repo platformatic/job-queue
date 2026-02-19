@@ -2,14 +2,17 @@ import { type Redis } from 'iovalkey'
 import { EventEmitter } from 'node:events'
 import { readFileSync } from 'node:fs'
 import { join } from 'node:path'
+import type { Logger } from 'pino'
 import type { Storage } from './types.ts'
 import { loadOptionalDependency } from './utils.ts'
+import { abstractLogger } from '../utils/logging.ts'
 
 const EXPIRING_VALUE_HEADER_SIZE = 8 // First 8 bytes are the expireAt timestamp in milliseconds (Uint64 BE)
 
 interface RedisStorageConfig {
   url?: string
   keyPrefix?: string
+  logger?: Logger
 }
 
 interface ScriptSHAs {
@@ -35,10 +38,12 @@ export class RedisStorage implements Storage {
   #eventEmitter = new EventEmitter({ captureRejections: true })
   #notifyEmitter = new EventEmitter({ captureRejections: true })
   #eventSubscription: boolean = false
+  #logger: Logger
 
   constructor (config: RedisStorageConfig = {}) {
     this.#url = config.url ?? process.env.REDIS_URL ?? 'redis://localhost:6379'
     this.#keyPrefix = config.keyPrefix ?? 'jq:'
+    this.#logger = (config.logger ?? abstractLogger).child({ component: 'redis-storage', keyPrefix: this.#keyPrefix })
 
     // Disable max listeners warning for high-throughput scenarios
     this.#eventEmitter.setMaxListeners(0)
@@ -273,6 +278,7 @@ export class RedisStorage implements Storage {
 
     const decoded = this.#decodeExpiringValue(result)
     if (!decoded) {
+      this.#logger.warn({ id, valueLength: result.length }, 'Failed to decode TTL envelope for result.')
       // Backward compatibility for legacy entries stored without envelope
       return result
     }
@@ -297,6 +303,7 @@ export class RedisStorage implements Storage {
 
     const decoded = this.#decodeExpiringValue(result)
     if (!decoded) {
+      this.#logger.warn({ id, valueLength: result.length }, 'Failed to decode TTL envelope for error.')
       // Backward compatibility for legacy entries stored without envelope
       return result
     }

@@ -1,3 +1,4 @@
+import type { Logger } from 'pino'
 import type { Storage } from './storage/types.ts'
 import type { Serde } from './serde/index.ts'
 
@@ -160,6 +161,9 @@ export interface QueueConfig<TPayload, TResult> {
 
   /** TTL for stored results and errors in ms (default: 3600000 = 1 hour) */
   resultTTL?: number
+
+  /** Logger instance (default: abstract logger / no-op) */
+  logger?: Logger
 }
 
 /**

@@ -1,8 +1,8 @@
-import { describe, it, beforeEach, afterEach } from 'node:test'
 import assert from 'node:assert'
-import { setTimeout as sleep } from 'node:timers/promises'
 import { once } from 'node:events'
-import { Queue, MemoryStorage, type Job } from '../src/index.ts'
+import { afterEach, beforeEach, describe, it } from 'node:test'
+import { setTimeout as sleep } from 'node:timers/promises'
+import { MemoryStorage, Queue, type Job } from '../src/index.ts'
 
 describe('Queue', () => {
   let storage: MemoryStorage
@@ -27,6 +27,38 @@ describe('Queue', () => {
     it('should start and stop', async () => {
       await queue.start()
       await queue.stop()
+    })
+
+    it('should accept a custom logger instance', async () => {
+      const logs: string[] = []
+      const logger = {
+        fatal: () => {},
+        error: () => {
+          logs.push('error')
+        },
+        warn: () => {
+          logs.push('warn')
+        },
+        info: () => {
+          logs.push('info')
+        },
+        debug: () => {
+          logs.push('debug')
+        },
+        trace: () => {},
+        child () {
+          return this
+        }
+      }
+
+      const localQueue = new Queue<{ value: number }, { result: number }>({
+        storage,
+        logger: logger as unknown as import('pino').Logger
+      })
+
+      await localQueue.start()
+      await localQueue.stop()
+      assert.ok(logs.includes('debug'))
     })
 
     it('should handle multiple start calls', async () => {

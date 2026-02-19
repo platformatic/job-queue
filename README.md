@@ -83,6 +83,7 @@ const queue = new Queue<TPayload, TResult>(config)
 | `blockTimeout` | `number` | `5` | Seconds to wait when polling for jobs |
 | `visibilityTimeout` | `number` | `30000` | Milliseconds before a processing job is considered stalled |
 | `resultTTL` | `number` | `3600000` | Milliseconds to cache job results (1 hour) |
+| `logger` | `pino.Logger` | `abstractLogger` | Logger used by queue/producer/consumer |
 | `afterExecution` | `AfterExecutionHook<TPayload, TResult>` | `undefined` | Hook called after execution and before persisting terminal state |
 | `payloadSerde` | `Serde<TPayload>` | `JsonSerde` | Custom serializer for job payloads |
 | `resultSerde` | `Serde<TResult>` | `JsonSerde` | Custom serializer for job results |
@@ -279,7 +280,8 @@ import { RedisStorage } from '@platformatic/job-queue'
 
 const storage = new RedisStorage({
   url: 'redis://localhost:6379',
-  keyPrefix: 'myapp:'  // Optional prefix for all keys
+  keyPrefix: 'myapp:', // Optional prefix for all keys
+  logger // Optional pino-compatible logger
 })
 ```
 
