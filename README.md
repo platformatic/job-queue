@@ -83,6 +83,7 @@ const queue = new Queue<TPayload, TResult>(config)
 | `blockTimeout` | `number` | `5` | Seconds to wait when polling for jobs |
 | `visibilityTimeout` | `number` | `30000` | Milliseconds before a processing job is considered stalled |
 | `resultTTL` | `number` | `3600000` | Milliseconds to cache job results (1 hour) |
+| `afterExecution` | `AfterExecutionHook<TPayload, TResult>` | `undefined` | Hook called after execution and before persisting terminal state |
 | `payloadSerde` | `Serde<TPayload>` | `JsonSerde` | Custom serializer for job payloads |
 | `resultSerde` | `Serde<TResult>` | `JsonSerde` | Custom serializer for job results |
 
@@ -145,6 +146,25 @@ Throws `TimeoutError` if the job doesn't complete within the timeout.
 - If omitted, the producer uses the queue default `resultTTL` at enqueue time.
 - For duplicate IDs, the first accepted enqueue defines the TTL for that job.
 
+`afterExecution` hook behavior:
+- Runs after a successful execution or after the final failed attempt, before terminal state is persisted.
+- Receives a mutable context object (passed by reference), including `result`/`error` and `ttl`.
+- You can update `context.ttl` to change the stored result/error TTL dynamically.
+- You can replace `context.result` / `context.error` to affect what is persisted.
+- `id` and `status` are informational; changing them has no effect on persistence.
+
+```typescript
+const queue = new Queue<{ url: string }, { body: string; maxAgeMs?: number }>({
+  storage,
+  resultTTL: 60_000,
+  afterExecution: async (context) => {
+    if (context.status === 'completed' && context.result?.maxAgeMs) {
+      context.ttl = context.result.maxAgeMs
+    }
+  }
+})
+```
+
 ##### `queue.cancel(id): Promise<CancelResult>`
 
 Cancel a queued job.
@@ -162,6 +182,22 @@ const result = await queue.cancel('job-123')
 ##### `queue.getResult(id): Promise<TResult | null>`
 
 Get the cached result of a completed job.
+
+##### `queue.updateResultTTL(id, ttlMs): Promise<UpdateResultTTLResult>`
+
+Update TTL for a terminal job payload:
+- completed jobs: updates cached result TTL
+- failed jobs: updates cached error TTL
+
+```typescript
+const update = await queue.updateResultTTL('job-123', 5 * 60_000)
+
+// update.status can be:
+// - 'updated'
+// - 'not_found'
+// - 'not_terminal'
+// - 'missing_payload'
+```
 
 ##### `queue.getStatus(id): Promise<MessageStatus | null>`
 

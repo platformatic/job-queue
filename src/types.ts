@@ -41,6 +41,15 @@ export interface MessageStatus<TResult = unknown> {
 }
 
 /**
+ * Result of updating TTL for a terminal job payload (result/error)
+ */
+export type UpdateResultTTLResult =
+  | { status: 'updated' }
+  | { status: 'not_found' }
+  | { status: 'not_terminal' }
+  | { status: 'missing_payload' }
+
+/**
  * Options for enqueue operation
  */
 export interface EnqueueOptions {
@@ -83,6 +92,32 @@ export interface Job<TPayload> {
 }
 
 /**
+ * Context passed to afterExecution hook.
+ */
+export interface AfterExecutionContext<TPayload, TResult> {
+  id: string
+  payload: TPayload
+  attempts: number
+  maxAttempts: number
+  createdAt: number
+  status: 'completed' | 'failed'
+  result?: TResult
+  error?: Error
+  ttl: number
+  workerId: string
+  startedAt: number
+  finishedAt: number
+  durationMs: number
+}
+
+/**
+ * Hook executed after handler execution and before writing terminal state.
+ */
+export type AfterExecutionHook<TPayload, TResult> = (
+  context: AfterExecutionContext<TPayload, TResult>
+) => void | Promise<void>
+
+/**
  * Job handler function
  */
 export type JobHandler<TPayload, TResult> =
@@ -95,6 +130,9 @@ export type JobHandler<TPayload, TResult> =
 export interface QueueConfig<TPayload, TResult> {
   /** Storage backend (required) */
   storage: Storage
+
+  /** Hook called after execution and before persisting terminal state */
+  afterExecution?: AfterExecutionHook<TPayload, TResult>
 
   /** Payload serializer (default: JSON) */
   payloadSerde?: Serde<TPayload>

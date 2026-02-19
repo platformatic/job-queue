@@ -9,7 +9,8 @@ import type {
   EnqueueResult,
   MessageStatus,
   QueueMessage,
-  SerializedError
+  SerializedError,
+  UpdateResultTTLResult
 } from './types.ts'
 import { parseState } from './utils/state.ts'
 
@@ -170,6 +171,40 @@ export class Producer<TPayload, TResult> {
       return null
     }
     return this.#resultSerde.deserialize(resultBuffer)
+  }
+
+  /**
+   * Update TTL for a terminal job payload (result for completed jobs, error for failed jobs).
+   */
+  async updateResultTTL (id: string, ttlMs: number): Promise<UpdateResultTTLResult> {
+    this.#validateResultTTL(ttlMs)
+
+    const state = await this.#storage.getJobState(id)
+    if (!state) {
+      return { status: 'not_found' }
+    }
+
+    const { status } = parseState(state)
+
+    if (status !== 'completed' && status !== 'failed') {
+      return { status: 'not_terminal' }
+    }
+
+    if (status === 'completed') {
+      const existingResult = await this.#storage.getResult(id)
+      if (!existingResult) {
+        return { status: 'missing_payload' }
+      }
+      await this.#storage.setResult(id, existingResult, ttlMs)
+      return { status: 'updated' }
+    }
+
+    const existingError = await this.#storage.getError(id)
+    if (!existingError) {
+      return { status: 'missing_payload' }
+    }
+    await this.#storage.setError(id, existingError, ttlMs)
+    return { status: 'updated' }
   }
 
   /**

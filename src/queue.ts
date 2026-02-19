@@ -9,8 +9,10 @@ import type {
   EnqueueResult,
   CancelResult,
   MessageStatus,
+  UpdateResultTTLResult,
   JobHandler,
-  QueueEvents
+  QueueEvents,
+  AfterExecutionHook
 } from './types.ts'
 import { Producer } from './producer.ts'
 import { Consumer } from './consumer.ts'
@@ -34,6 +36,7 @@ export class Queue<TPayload, TResult = void> extends EventEmitter<QueueEvents<TR
   #maxRetries: number
   #resultTTL: number
   #visibilityTimeout: number
+  #afterExecution: AfterExecutionHook<TPayload, TResult> | undefined
 
   constructor (config: QueueConfig<TPayload, TResult>) {
     super()
@@ -47,6 +50,7 @@ export class Queue<TPayload, TResult = void> extends EventEmitter<QueueEvents<TR
     this.#maxRetries = config.maxRetries ?? 3
     this.#resultTTL = config.resultTTL ?? 3600000
     this.#visibilityTimeout = config.visibilityTimeout ?? 30000
+    this.#afterExecution = config.afterExecution
 
     this.#producer = new Producer<TPayload, TResult>({
       storage: this.#storage,
@@ -139,6 +143,13 @@ export class Queue<TPayload, TResult = void> extends EventEmitter<QueueEvents<TR
   }
 
   /**
+   * Update TTL for a terminal job payload (result or error).
+   */
+  async updateResultTTL (id: string, ttlMs: number): Promise<UpdateResultTTLResult> {
+    return this.#producer.updateResultTTL(id, ttlMs)
+  }
+
+  /**
    * Get the status of a job
    */
   async getStatus (id: string): Promise<MessageStatus<TResult> | null> {
@@ -157,7 +168,8 @@ export class Queue<TPayload, TResult = void> extends EventEmitter<QueueEvents<TR
       blockTimeout: this.#blockTimeout,
       maxRetries: this.#maxRetries,
       resultTTL: this.#resultTTL,
-      visibilityTimeout: this.#visibilityTimeout
+      visibilityTimeout: this.#visibilityTimeout,
+      afterExecution: this.#afterExecution
     })
 
     // Forward consumer events
