@@ -1,7 +1,7 @@
 import { EventEmitter } from 'node:events'
 import type { Storage } from './storage/types.ts'
 import type { Serde } from './serde/index.ts'
-import type { QueueMessage, Job, JobHandler } from './types.ts'
+import type { QueueMessage, Job, JobHandler, AfterExecutionHook, AfterExecutionContext } from './types.ts'
 import { MaxRetriesError } from './errors.ts'
 import { createJsonSerde } from './serde/index.ts'
 
@@ -15,6 +15,7 @@ interface ConsumerConfig<TPayload, TResult> {
   maxRetries?: number
   resultTTL?: number
   visibilityTimeout?: number
+  afterExecution?: AfterExecutionHook<TPayload, TResult>
 }
 
 interface ConsumerEvents<TResult> {
@@ -26,6 +27,10 @@ interface ConsumerEvents<TResult> {
 }
 
 type ExtendedError = Error & { code?: string; toJSON?: () => Record<string, any> }
+
+const noopAfterExecution = async <TPayload, TResult>(
+  _context: AfterExecutionContext<TPayload, TResult>
+): Promise<void> => {}
 
 /**
  * Consumer handles processing jobs from the queue
@@ -40,6 +45,7 @@ export class Consumer<TPayload, TResult> extends EventEmitter<ConsumerEvents<TRe
   #maxRetries: number
   #resultTTL: number
   #visibilityTimeout: number
+  #afterExecution: AfterExecutionHook<TPayload, TResult>
 
   #handler: JobHandler<TPayload, TResult> | null = null
   #running = false
@@ -58,6 +64,7 @@ export class Consumer<TPayload, TResult> extends EventEmitter<ConsumerEvents<TRe
     this.#maxRetries = config.maxRetries ?? 3
     this.#resultTTL = config.resultTTL ?? 3600000
     this.#visibilityTimeout = config.visibilityTimeout ?? 30000
+    this.#afterExecution = config.afterExecution ?? noopAfterExecution
   }
 
   /**
@@ -163,8 +170,8 @@ export class Consumer<TPayload, TResult> extends EventEmitter<ConsumerEvents<TRe
    */
   async #processJob (message: Buffer): Promise<void> {
     const queueMessage = this.#deserializeMessage(message)
-    const { id, payload, attempts, maxAttempts } = queueMessage
-    const resultTTL = queueMessage.resultTTL ?? this.#resultTTL
+    const { id, payload, attempts, maxAttempts, createdAt } = queueMessage
+    const resolvedTTL = queueMessage.resultTTL ?? this.#resultTTL
 
     // Check if job was cancelled (deleted from jobs hash)
     const state = await this.#storage.getJobState(id)
@@ -185,16 +192,18 @@ export class Consumer<TPayload, TResult> extends EventEmitter<ConsumerEvents<TRe
       jobAbortController.abort()
     }, this.#visibilityTimeout)
 
+    const currentAttempts = attempts + 1
+
     // Update state to processing
-    const timestamp = Date.now()
-    await this.#storage.setJobState(id, `processing:${timestamp}:${this.#workerId}`)
+    const startedAt = Date.now()
+    await this.#storage.setJobState(id, `processing:${startedAt}:${this.#workerId}`)
     await this.#storage.publishEvent(id, 'processing')
 
     try {
       const job: Job<TPayload> = {
         id,
         payload,
-        attempts: attempts + 1,
+        attempts: currentAttempts,
         signal: jobAbortController.signal
       }
 
@@ -203,17 +212,34 @@ export class Consumer<TPayload, TResult> extends EventEmitter<ConsumerEvents<TRe
       // Clear visibility timer
       clearTimeout(visibilityTimer)
 
-      // Complete the job
-      const serializedResult = this.#resultSerde.serialize(result)
-      await this.#storage.completeJob(id, message, this.#workerId, serializedResult, resultTTL)
+      const finishedAt = Date.now()
+      const context = await this.#runAfterExecution({
+        id,
+        payload,
+        attempts: currentAttempts,
+        maxAttempts,
+        createdAt,
+        status: 'completed',
+        result,
+        ttl: resolvedTTL,
+        workerId: this.#workerId,
+        startedAt,
+        finishedAt,
+        durationMs: finishedAt - startedAt
+      })
 
-      this.emit('completed', id, result)
+      const finalResult = context.result as TResult
+
+      // Complete the job
+      const serializedResult = this.#resultSerde.serialize(finalResult)
+      await this.#storage.completeJob(id, message, this.#workerId, serializedResult, context.ttl)
+
+      this.emit('completed', id, finalResult)
     } catch (err) {
       // Clear visibility timer
       clearTimeout(visibilityTimer)
 
       const error = err as ExtendedError
-      const currentAttempts = attempts + 1
 
       if (currentAttempts < maxAttempts) {
         // Retry - update message with incremented attempts
@@ -228,20 +254,37 @@ export class Consumer<TPayload, TResult> extends EventEmitter<ConsumerEvents<TRe
         this.emit('failing', id, error, currentAttempts)
       } else {
         // Max retries exceeded - fail the job
-        const maxRetriesError = new MaxRetriesError(id, currentAttempts, error)
+        const finishedAt = Date.now()
+        const context = await this.#runAfterExecution({
+          id,
+          payload,
+          attempts: currentAttempts,
+          maxAttempts,
+          createdAt,
+          status: 'failed',
+          error,
+          ttl: resolvedTTL,
+          workerId: this.#workerId,
+          startedAt,
+          finishedAt,
+          durationMs: finishedAt - startedAt
+        })
+
+        const finalError = (context.error as ExtendedError) ?? error
+        const maxRetriesError = new MaxRetriesError(id, currentAttempts, finalError)
         const serializedError = Buffer.from(
           JSON.stringify(
-            typeof error.toJSON === 'function'
-              ? error.toJSON()
+            typeof finalError.toJSON === 'function'
+              ? finalError.toJSON()
               : {
-                  message: error.message,
-                  code: error.code,
-                  stack: error.stack
+                  message: finalError.message,
+                  code: finalError.code,
+                  stack: finalError.stack
                 }
           )
         )
 
-        await this.#storage.failJob(id, message, this.#workerId, serializedError, resultTTL)
+        await this.#storage.failJob(id, message, this.#workerId, serializedError, context.ttl)
 
         this.emit('failed', id, maxRetriesError)
       }
@@ -249,6 +292,26 @@ export class Consumer<TPayload, TResult> extends EventEmitter<ConsumerEvents<TRe
       this.#jobAbortControllers.delete(id)
       this.#activeJobs--
     }
+  }
+
+  async #runAfterExecution (
+    context: AfterExecutionContext<TPayload, TResult>
+  ): Promise<AfterExecutionContext<TPayload, TResult>> {
+    const originalTTL = context.ttl
+
+    try {
+      await this.#afterExecution(context)
+    } catch (err) {
+      this.emit('error', err as Error)
+      context.ttl = originalTTL
+    }
+
+    if (!Number.isFinite(context.ttl) || !Number.isInteger(context.ttl) || context.ttl <= 0) {
+      this.emit('error', new TypeError('resultTTL must be a positive integer in milliseconds'))
+      context.ttl = originalTTL
+    }
+
+    return context
   }
 
   /**

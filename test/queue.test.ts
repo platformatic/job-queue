@@ -446,6 +446,175 @@ describe('Queue', () => {
     })
   })
 
+  describe('afterExecution hook', () => {
+    it('should allow overriding TTL and replacing result in afterExecution', async () => {
+      const localStorage = new MemoryStorage()
+      const localQueue = new Queue<{ value: number }, { result: number }>({
+        storage: localStorage,
+        resultTTL: 5000,
+        visibilityTimeout: 5000,
+        afterExecution: context => {
+          assert.strictEqual(context.status, 'completed')
+          assert.strictEqual(context.id, 'job-1')
+          assert.strictEqual(context.payload.value, 21)
+          assert.strictEqual(context.attempts, 1)
+          assert.strictEqual(context.maxAttempts, 3)
+          assert.ok(context.durationMs >= 0)
+
+          context.ttl = 20
+          context.result = { result: 777 }
+        }
+      })
+
+      localQueue.execute(async (job: Job<{ value: number }>) => {
+        return { result: job.payload.value * 2 }
+      })
+
+      await localQueue.start()
+      await localQueue.enqueue('job-1', { value: 21 })
+      const [, completedResult] = await once(localQueue, 'completed')
+
+      assert.deepStrictEqual(completedResult, { result: 777 })
+      assert.deepStrictEqual(await localQueue.getResult('job-1'), { result: 777 })
+
+      await sleep(60)
+      assert.strictEqual(await localQueue.getResult('job-1'), null)
+
+      await localQueue.stop()
+    })
+
+    it('should support async afterExecution hook on failed jobs', async () => {
+      const localStorage = new MemoryStorage()
+      const localQueue = new Queue<{ value: number }, { result: number }>({
+        storage: localStorage,
+        resultTTL: 20,
+        visibilityTimeout: 5000,
+        afterExecution: async context => {
+          await sleep(5)
+          assert.strictEqual(context.status, 'failed')
+          context.ttl = 200
+          context.error = new Error('updated boom')
+        }
+      })
+
+      localQueue.execute(async () => {
+        throw new Error('boom')
+      })
+
+      await localQueue.start()
+      await localQueue.enqueue('job-1', { value: 21 }, { maxAttempts: 1 })
+      await once(localQueue, 'failed')
+
+      await sleep(60)
+      const error = await localStorage.getError('job-1')
+      assert.ok(error)
+      assert.match(error.toString(), /updated boom/)
+
+      await localQueue.stop()
+    })
+  })
+
+  describe('updateResultTTL', () => {
+    it('should update TTL for completed jobs', async () => {
+      const localStorage = new MemoryStorage()
+      const localQueue = new Queue<{ value: number }, { result: number }>({
+        storage: localStorage,
+        resultTTL: 20,
+        visibilityTimeout: 5000
+      })
+
+      localQueue.execute(async (job: Job<{ value: number }>) => {
+        return { result: job.payload.value * 2 }
+      })
+
+      await localQueue.start()
+      await localQueue.enqueue('job-1', { value: 21 })
+      await once(localQueue, 'completed')
+
+      const updateResult = await localQueue.updateResultTTL('job-1', 200)
+      assert.deepStrictEqual(updateResult, { status: 'updated' })
+
+      await sleep(60)
+      assert.deepStrictEqual(await localQueue.getResult('job-1'), { result: 42 })
+
+      await localQueue.stop()
+    })
+
+    it('should update TTL for failed jobs', async () => {
+      const localStorage = new MemoryStorage()
+      const localQueue = new Queue<{ value: number }, { result: number }>({
+        storage: localStorage,
+        resultTTL: 20,
+        visibilityTimeout: 5000
+      })
+
+      localQueue.execute(async () => {
+        throw new Error('boom')
+      })
+
+      await localQueue.start()
+      await localQueue.enqueue('job-1', { value: 1 }, { maxAttempts: 1 })
+      await once(localQueue, 'failed')
+
+      const updateResult = await localQueue.updateResultTTL('job-1', 200)
+      assert.deepStrictEqual(updateResult, { status: 'updated' })
+
+      await sleep(60)
+      const error = await localStorage.getError('job-1')
+      assert.ok(error)
+
+      await localQueue.stop()
+    })
+
+    it('should return not_found when job does not exist', async () => {
+      await queue.start()
+
+      const updateResult = await queue.updateResultTTL('missing-job', 100)
+      assert.deepStrictEqual(updateResult, { status: 'not_found' })
+    })
+
+    it('should return not_terminal for queued jobs', async () => {
+      await queue.start()
+      await queue.enqueue('job-1', { value: 21 })
+
+      const updateResult = await queue.updateResultTTL('job-1', 100)
+      assert.deepStrictEqual(updateResult, { status: 'not_terminal' })
+    })
+
+    it('should return missing_payload when terminal payload has expired', async () => {
+      const localStorage = new MemoryStorage()
+      const localQueue = new Queue<{ value: number }, { result: number }>({
+        storage: localStorage,
+        resultTTL: 20,
+        visibilityTimeout: 5000
+      })
+
+      localQueue.execute(async (job: Job<{ value: number }>) => {
+        return { result: job.payload.value * 2 }
+      })
+
+      await localQueue.start()
+      await localQueue.enqueue('job-1', { value: 21 })
+      await once(localQueue, 'completed')
+
+      await sleep(60)
+
+      const updateResult = await localQueue.updateResultTTL('job-1', 100)
+      assert.deepStrictEqual(updateResult, { status: 'missing_payload' })
+
+      await localQueue.stop()
+    })
+
+    it('should reject invalid TTL values', async () => {
+      await queue.start()
+      await assert.rejects(queue.updateResultTTL('job-1', 0), (err: Error) => {
+        assert.strictEqual(err.name, 'TypeError')
+        assert.match(err.message, /resultTTL must be a positive integer/)
+        return true
+      })
+    })
+  })
+
   describe('concurrency', () => {
     it('should process multiple jobs concurrently', async () => {
       const concurrentQueue = new Queue<{ value: number }, { result: number }>({
