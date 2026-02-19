@@ -2,6 +2,7 @@ import assert from 'node:assert'
 import { once } from 'node:events'
 import { afterEach, beforeEach, describe, it } from 'node:test'
 import { setTimeout as sleep } from 'node:timers/promises'
+import { type Logger } from 'pino'
 import { MemoryStorage, Queue, type Job } from '../src/index.ts'
 
 describe('Queue', () => {
@@ -31,7 +32,7 @@ describe('Queue', () => {
 
     it('should accept a custom logger instance', async () => {
       const logs: string[] = []
-      const logger = {
+      const logger: Logger = {
         fatal: () => {},
         error: () => {
           logs.push('error')
@@ -49,12 +50,9 @@ describe('Queue', () => {
         child () {
           return this
         }
-      }
+      } as unknown as Logger
 
-      const localQueue = new Queue<{ value: number }, { result: number }>({
-        storage,
-        logger: logger as unknown as import('pino').Logger
-      })
+      const localQueue = new Queue<{ value: number }, { result: number }>({ storage, logger })
 
       await localQueue.start()
       await localQueue.stop()
