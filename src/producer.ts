@@ -42,11 +42,7 @@ export class Producer<TPayload, TResult> {
   /**
    * Enqueue a job (fire-and-forget)
    */
-  async enqueue (
-    id: string,
-    payload: TPayload,
-    options?: EnqueueOptions
-  ): Promise<EnqueueResult<TResult>> {
+  async enqueue (id: string, payload: TPayload, options?: EnqueueOptions): Promise<EnqueueResult<TResult>> {
     const timestamp = Date.now()
     const maxAttempts = options?.maxAttempts ?? this.#maxRetries
     const resultTTL = options?.resultTTL ?? this.#resultTTL
@@ -84,17 +80,13 @@ export class Producer<TPayload, TResult> {
   /**
    * Enqueue a job and wait for the result
    */
-  async enqueueAndWait (
-    id: string,
-    payload: TPayload,
-    options?: EnqueueAndWaitOptions
-  ): Promise<TResult> {
+  async enqueueAndWait (id: string, payload: TPayload, options?: EnqueueAndWaitOptions): Promise<TResult> {
     const timeout = options?.timeout ?? 30000
 
     // Subscribe BEFORE enqueue to avoid race conditions
     const { promise: resultPromise, resolve: resolveResult, reject: rejectResult } = Promise.withResolvers<TResult>()
 
-    const unsubscribe = await this.#storage.subscribeToJob(id, async (status) => {
+    const unsubscribe = await this.#storage.subscribeToJob(id, async status => {
       if (status === 'completed') {
         const result = await this.getResult(id)
         if (result !== null) {

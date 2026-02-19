@@ -12,8 +12,5 @@ export function generateId (): string {
  * Useful for deduplication based on content
  */
 export function contentId (payload: unknown): string {
-  return createHash('sha256')
-    .update(JSON.stringify(payload))
-    .digest('hex')
-    .slice(0, 16)
+  return createHash('sha256').update(JSON.stringify(payload)).digest('hex').slice(0, 16)
 }

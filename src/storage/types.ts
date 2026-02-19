@@ -170,9 +170,7 @@ export interface Storage {
    *
    * @returns Unsubscribe function
    */
-  subscribeToEvents (
-    handler: (id: string, event: string) => void
-  ): Promise<() => Promise<void>>
+  subscribeToEvents (handler: (id: string, event: string) => void): Promise<() => Promise<void>>
 
   /**
    * Publish a job state change event.
@@ -192,7 +190,7 @@ export interface Storage {
    * @param ttlMs - Lock TTL in milliseconds
    * @returns true if lock was acquired, false if already held by another
    */
-  acquireLeaderLock?(lockKey: string, ownerId: string, ttlMs: number): Promise<boolean>
+  acquireLeaderLock? (lockKey: string, ownerId: string, ttlMs: number): Promise<boolean>
 
   /**
    * Renew the leader lock if still owned by this reaper.
@@ -203,7 +201,7 @@ export interface Storage {
    * @param ttlMs - New TTL in milliseconds
    * @returns true if lock was renewed, false if not owned
    */
-  renewLeaderLock?(lockKey: string, ownerId: string, ttlMs: number): Promise<boolean>
+  renewLeaderLock? (lockKey: string, ownerId: string, ttlMs: number): Promise<boolean>
 
   /**
    * Release the leader lock if owned by this reaper.
@@ -213,7 +211,7 @@ export interface Storage {
    * @param ownerId - Unique identifier for this reaper instance
    * @returns true if lock was released, false if not owned
    */
-  releaseLeaderLock?(lockKey: string, ownerId: string): Promise<boolean>
+  releaseLeaderLock? (lockKey: string, ownerId: string): Promise<boolean>
 
   // ═══════════════════════════════════════════════════════════════════
   // ATOMIC OPERATIONS (Lua scripts in Redis)
@@ -226,13 +224,7 @@ export interface Storage {
    * - Remove from processing queue
    * - Publish notification
    */
-  completeJob (
-    id: string,
-    message: Buffer,
-    workerId: string,
-    result: Buffer,
-    resultTTL: number
-  ): Promise<void>
+  completeJob (id: string, message: Buffer, workerId: string, result: Buffer, resultTTL: number): Promise<void>
 
   /**
    * Atomically fail a job:
@@ -241,13 +233,7 @@ export interface Storage {
    * - Remove from processing queue
    * - Publish notification
    */
-  failJob (
-    id: string,
-    message: Buffer,
-    workerId: string,
-    error: Buffer,
-    errorTTL: number
-  ): Promise<void>
+  failJob (id: string, message: Buffer, workerId: string, error: Buffer, errorTTL: number): Promise<void>
 
   /**
    * Atomically retry a job:
@@ -255,10 +241,5 @@ export interface Storage {
    * - Move from processing queue to main queue
    * - Publish event
    */
-  retryJob (
-    id: string,
-    message: Buffer,
-    workerId: string,
-    attempts: number
-  ): Promise<void>
+  retryJob (id: string, message: Buffer, workerId: string, attempts: number): Promise<void>
 }

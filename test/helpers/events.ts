@@ -4,13 +4,9 @@ import type { EventEmitter } from 'node:events'
 /**
  * Wait for N events of a given type
  */
-export async function waitForEvents (
-  emitter: EventEmitter,
-  event: string,
-  count: number
-): Promise<void> {
+export async function waitForEvents (emitter: EventEmitter, event: string, count: number): Promise<void> {
   let received = 0
-  return new Promise((resolve) => {
+  return new Promise(resolve => {
     const handler = () => {
       received++
       if (received >= count) {
@@ -27,7 +23,7 @@ export async function waitForEvents (
  */
 export function createLatch (): { promise: Promise<void>; resolve: () => void } {
   let resolve!: () => void
-  const promise = new Promise<void>((_resolve) => {
+  const promise = new Promise<void>(_resolve => {
     resolve = _resolve
   })
   return { promise, resolve }
@@ -40,15 +36,15 @@ export function createLatch (): { promise: Promise<void>; resolve: () => void } 
 export function promisifyCallback<T> (
   subscribe: (handler: (value: T) => void) => Promise<() => Promise<void>>
 ): Promise<{ value: Promise<T>; unsubscribe: () => Promise<void> }> {
-  return new Promise((resolve) => {
+  return new Promise(resolve => {
     let resolveValue!: (value: T) => void
-    const value = new Promise<T>((_resolve) => {
+    const value = new Promise<T>(_resolve => {
       resolveValue = _resolve
     })
 
     subscribe((v: T) => {
       resolveValue(v)
-    }).then((unsubscribe) => {
+    }).then(unsubscribe => {
       resolve({ value, unsubscribe })
     })
   })
@@ -63,7 +59,7 @@ export function waitForCallbacks (count: number): {
 } {
   let received = 0
   let resolve!: () => void
-  const promise = new Promise<void>((_resolve) => {
+  const promise = new Promise<void>(_resolve => {
     resolve = _resolve
   })
   const callback = () => {

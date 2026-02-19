@@ -28,12 +28,15 @@ describe('Reaper Leader Election (FileStorage)', () => {
     return storage
   }
 
-  function createReaper (storage: FileStorage, opts?: {
-    visibilityTimeout?: number
-    lockTTL?: number
-    renewalInterval?: number
-    acquireRetryInterval?: number
-  }): Reaper<unknown> {
+  function createReaper (
+    storage: FileStorage,
+    opts?: {
+      visibilityTimeout?: number
+      lockTTL?: number
+      renewalInterval?: number
+      acquireRetryInterval?: number
+    }
+  ): Reaper<unknown> {
     const reaper = new Reaper({
       storage,
       visibilityTimeout: opts?.visibilityTimeout ?? 100,
@@ -99,7 +102,7 @@ describe('Reaper Leader Election (FileStorage)', () => {
         processCount++
         if (processCount === 1) {
           // First attempt: stall
-          await new Promise<void>((resolve) => {
+          await new Promise<void>(resolve => {
             abortFirstHandler = resolve
             job.signal.addEventListener('abort', () => resolve())
           })

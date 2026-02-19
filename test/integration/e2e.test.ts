@@ -24,7 +24,7 @@ interface TestResult {
   workerId: string
 }
 
-type StorageFactory = () => Promise<{ storage: Storage, cleanup: () => Promise<void> }>
+type StorageFactory = () => Promise<{ storage: Storage; cleanup: () => Promise<void> }>
 
 // Storage factories for different backends
 const memoryStorageFactory: StorageFactory = async () => {
@@ -61,8 +61,8 @@ const redisStorageFactory: StorageFactory = async () => {
 }
 
 // Determine which storage backends to test
-function getStorageFactories (): Array<{ name: string, factory: StorageFactory }> {
-  const factories: Array<{ name: string, factory: StorageFactory }> = [
+function getStorageFactories (): Array<{ name: string; factory: StorageFactory }> {
+  const factories: Array<{ name: string; factory: StorageFactory }> = [
     { name: 'MemoryStorage', factory: memoryStorageFactory },
     { name: 'FileStorage', factory: fileStorageFactory }
   ]

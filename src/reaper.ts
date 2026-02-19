@@ -293,7 +293,7 @@ export class Reaper<TPayload> extends EventEmitter<ReaperEvents> {
 
     const timer = setTimeout(() => {
       this.#processingTimers.delete(id)
-      this.#checkJob(id).catch((err) => {
+      this.#checkJob(id).catch(err => {
         this.emit('error', err)
       })
     }, this.#visibilityTimeout)
@@ -336,7 +336,7 @@ export class Reaper<TPayload> extends EventEmitter<ReaperEvents> {
       const remaining = this.#visibilityTimeout - elapsed
       const timer = setTimeout(() => {
         this.#processingTimers.delete(id)
-        this.#checkJob(id).catch((err) => {
+        this.#checkJob(id).catch(err => {
           this.emit('error', err)
         })
       }, remaining)
@@ -434,7 +434,7 @@ export class Reaper<TPayload> extends EventEmitter<ReaperEvents> {
             const remaining = this.#visibilityTimeout - elapsed
             const timer = setTimeout(() => {
               this.#processingTimers.delete(queueMessage.id)
-              this.#checkJob(queueMessage.id).catch((err) => {
+              this.#checkJob(queueMessage.id).catch(err => {
                 this.emit('error', err)
               })
             }, remaining)
