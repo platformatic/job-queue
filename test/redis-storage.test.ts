@@ -184,6 +184,16 @@ describe('RedisStorage', () => {
       const result = await storage.getResult('non-existent')
       assert.strictEqual(result, null)
     })
+
+    it('should expire results per job without affecting other entries', async () => {
+      await storage.setResult('job-short', Buffer.from('short'), 20)
+      await storage.setResult('job-long', Buffer.from('long'), 1000)
+
+      await sleep(30)
+
+      assert.strictEqual(await storage.getResult('job-short'), null)
+      assert.deepStrictEqual(await storage.getResult('job-long'), Buffer.from('long'))
+    })
   })
 
   describe('errors', () => {
@@ -198,6 +208,16 @@ describe('RedisStorage', () => {
     it('should return null for non-existent error', async () => {
       const error = await storage.getError('non-existent')
       assert.strictEqual(error, null)
+    })
+
+    it('should expire errors per job without affecting other entries', async () => {
+      await storage.setError('job-short', Buffer.from('short-error'), 20)
+      await storage.setError('job-long', Buffer.from('long-error'), 1000)
+
+      await sleep(30)
+
+      assert.strictEqual(await storage.getError('job-short'), null)
+      assert.deepStrictEqual(await storage.getError('job-long'), Buffer.from('long-error'))
     })
   })
 
