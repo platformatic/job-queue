@@ -397,11 +397,11 @@ export class FileStorage implements Storage {
 
   async getJobStates (ids: string[]): Promise<Map<string, string | null>> {
     const result = new Map<string, string | null>()
-    await Promise.all(
-      ids.map(async id => {
-        result.set(id, await this.getJobState(id))
-      })
-    )
+
+    for (const id of ids) {
+      result.set(id, await this.getJobState(id))
+    }
+
     return result
   }
 

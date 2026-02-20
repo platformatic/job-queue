@@ -5,7 +5,7 @@ import { join } from 'node:path'
 import { tmpdir } from 'node:os'
 import { setTimeout as sleep } from 'node:timers/promises'
 import { createFileStorage } from './fixtures/file.ts'
-import { type FileStorage } from '../src/storage/file.ts'
+import { FileStorage } from '../src/storage/file.ts'
 import { promisifyCallback } from './helpers/events.ts'
 
 describe('FileStorage', () => {
@@ -121,6 +121,38 @@ describe('FileStorage', () => {
       assert.strictEqual(states.get('job-1'), 'queued:1')
       assert.strictEqual(states.get('job-2'), 'processing:2')
       assert.strictEqual(states.get('job-3'), null)
+    })
+
+    it('should call getJobState from getJobStates sequentially', async () => {
+      class TrackingFileStorage extends FileStorage {
+        getJobStateCalls = 0
+
+        async getJobState (id: string): Promise<string | null> {
+          this.getJobStateCalls++
+          return super.getJobState(id)
+        }
+      }
+
+      const basePath = await mkdtemp(join(tmpdir(), 'job-queue-file-test-'))
+      const trackingStorage = new TrackingFileStorage({ basePath })
+
+      try {
+        await trackingStorage.connect()
+        await trackingStorage.setJobState('job-1', 'queued:1')
+        await trackingStorage.setJobState('job-2', 'processing:2')
+
+        const ids = ['job-1', 'job-2', 'job-3']
+        const states = await trackingStorage.getJobStates(ids)
+
+        assert.strictEqual(states.get('job-1'), 'queued:1')
+        assert.strictEqual(states.get('job-2'), 'processing:2')
+        assert.strictEqual(states.get('job-3'), null)
+        assert.strictEqual(trackingStorage.getJobStateCalls, ids.length)
+      } finally {
+        await trackingStorage.clear()
+        await trackingStorage.disconnect()
+        await rm(basePath, { recursive: true, force: true })
+      }
     })
   })
 
