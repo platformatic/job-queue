@@ -1,9 +1,11 @@
-import { EventEmitter } from 'node:events'
 import { randomUUID } from 'node:crypto'
-import type { Storage } from './storage/types.ts'
+import { EventEmitter } from 'node:events'
+import type { Logger } from 'pino'
 import type { Serde } from './serde/index.ts'
-import type { QueueMessage } from './types.ts'
 import { createJsonSerde } from './serde/index.ts'
+import type { Storage } from './storage/types.ts'
+import type { QueueMessage } from './types.ts'
+import { abstractLogger, ensureLoggableError } from './utils/logging.ts'
 import { parseState } from './utils/state.ts'
 
 interface LeaderElectionConfig {
@@ -18,6 +20,7 @@ interface ReaperConfig<TPayload> {
   payloadSerde?: Serde<TPayload>
   visibilityTimeout?: number
   leaderElection?: LeaderElectionConfig
+  logger?: Logger
 }
 
 interface ReaperEvents {
@@ -46,6 +49,7 @@ export class Reaper<TPayload> extends EventEmitter<ReaperEvents> {
   #payloadSerde: Serde<TPayload>
   #visibilityTimeout: number
   #leaderElection: LeaderElectionConfig
+  #logger: Logger
 
   #running = false
   #unsubscribe: (() => Promise<void>) | null = null
@@ -63,6 +67,7 @@ export class Reaper<TPayload> extends EventEmitter<ReaperEvents> {
     this.#visibilityTimeout = config.visibilityTimeout ?? 30000
     this.#leaderElection = config.leaderElection ?? { enabled: false }
     this.#reaperId = randomUUID()
+    this.#logger = (config.logger ?? abstractLogger).child({ component: 'reaper', reaperId: this.#reaperId })
   }
 
   /**
@@ -201,7 +206,7 @@ export class Reaper<TPayload> extends EventEmitter<ReaperEvents> {
           }
         }
       } catch (err) {
-        this.emit('error', err as Error)
+        this.#emitError(err, 'Leadership check failed.')
       }
     }, interval)
   }
@@ -212,7 +217,7 @@ export class Reaper<TPayload> extends EventEmitter<ReaperEvents> {
   async #tryAcquireLock (ttlMs: number): Promise<boolean> {
     if (!this.#storage.acquireLeaderLock) {
       // Storage doesn't support leader election
-      this.emit('error', new Error('Storage does not support leader election'))
+      this.#emitError(new Error('Storage does not support leader election'))
       return false
     }
 
@@ -294,7 +299,7 @@ export class Reaper<TPayload> extends EventEmitter<ReaperEvents> {
     const timer = setTimeout(() => {
       this.#processingTimers.delete(id)
       this.#checkJob(id).catch(err => {
-        this.emit('error', err)
+        this.#emitError(err, 'Failed checking job after visibility timer.')
       })
     }, this.#visibilityTimeout)
 
@@ -337,7 +342,7 @@ export class Reaper<TPayload> extends EventEmitter<ReaperEvents> {
       const timer = setTimeout(() => {
         this.#processingTimers.delete(id)
         this.#checkJob(id).catch(err => {
-          this.emit('error', err)
+          this.#emitError(err, 'Failed re-checking job after visibility timeout.')
         })
       }, remaining)
       this.#processingTimers.set(id, timer)
@@ -353,7 +358,7 @@ export class Reaper<TPayload> extends EventEmitter<ReaperEvents> {
    */
   async #recoverStalledJob (id: string, workerId?: string): Promise<void> {
     if (!workerId) {
-      this.emit('error', new Error(`Cannot recover stalled job ${id}: no workerId in state`))
+      this.#emitError(new Error(`Cannot recover stalled job ${id}: no workerId in state`))
       return
     }
 
@@ -435,7 +440,7 @@ export class Reaper<TPayload> extends EventEmitter<ReaperEvents> {
             const timer = setTimeout(() => {
               this.#processingTimers.delete(queueMessage.id)
               this.#checkJob(queueMessage.id).catch(err => {
-                this.emit('error', err)
+                this.#emitError(err, 'Failed checking worker processing job.')
               })
             }, remaining)
             this.#processingTimers.set(queueMessage.id, timer)
@@ -445,5 +450,16 @@ export class Reaper<TPayload> extends EventEmitter<ReaperEvents> {
         // Ignore deserialization errors
       }
     }
+  }
+
+  #emitError (err: unknown, message = 'Reaper emitted error.'): void {
+    const error = err instanceof Error ? err : new Error(String(err))
+
+    if (this.listenerCount('error') > 0) {
+      this.emit('error', error)
+      return
+    }
+
+    this.#logger.error({ err: ensureLoggableError(error) }, message)
   }
 }

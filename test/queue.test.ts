@@ -542,6 +542,47 @@ describe('Queue', () => {
 
       await localQueue.stop()
     })
+
+    it('should log errors when no queue error listeners are registered', async t => {
+      const { promise, resolve } = Promise.withResolvers<void>()
+
+      const localStorage = new MemoryStorage()
+      const logs: string[] = []
+      const logger: Logger = {
+        fatal: () => {},
+        error: () => {
+          resolve()
+          logs.push('error')
+        },
+        warn: () => {},
+        info: () => {},
+        debug: () => {},
+        trace: () => {},
+        child () {
+          return this
+        }
+      } as unknown as Logger
+
+      const localQueue = new Queue<{ value: number }, { result: number }>({
+        storage: localStorage,
+        visibilityTimeout: 5000,
+        logger,
+        afterExecution: () => {
+          throw new Error('hook-error')
+        }
+      })
+
+      localQueue.execute(async (job: Job<{ value: number }>) => {
+        return { result: job.payload.value * 2 }
+      })
+
+      await localQueue.start()
+      t.after(() => localQueue.stop())
+      await localQueue.enqueue('job-1', { value: 21 })
+      await promise
+
+      assert.ok(logs.includes('error'))
+    })
   })
 
   describe('updateResultTTL', () => {
