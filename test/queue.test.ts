@@ -70,6 +70,29 @@ describe('Queue', () => {
       await queue.stop()
       await queue.stop()
     })
+
+    it('should restart and keep processing jobs', async () => {
+      queue.execute(async (job: Job<{ value: number }>) => {
+        return { result: job.payload.value * 2 }
+      })
+
+      await queue.start()
+      await queue.stop()
+      await queue.start()
+
+      const completedPromise = Promise.race([
+        once(queue, 'completed'),
+        sleep(1000).then(() => {
+          throw new Error('Timed out waiting for completed event after restart')
+        })
+      ])
+
+      await queue.enqueue('job-after-restart', { value: 21 })
+      const [completedId, completedResult] = await completedPromise
+
+      assert.strictEqual(completedId, 'job-after-restart')
+      assert.deepStrictEqual(completedResult, { result: 42 })
+    })
   })
 
   describe('enqueue', () => {

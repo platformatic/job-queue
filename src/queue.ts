@@ -101,6 +101,7 @@ export class Queue<TPayload, TResult = void> extends EventEmitter<QueueEvents<TR
 
     if (this.#consumer) {
       await this.#consumer.stop()
+      this.#consumer = null
     }
 
     await this.#storage.disconnect()
