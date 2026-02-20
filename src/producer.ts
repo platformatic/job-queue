@@ -1,3 +1,4 @@
+import type { Logger } from 'pino'
 import { JobFailedError, TimeoutError } from './errors.ts'
 import type { Serde } from './serde/index.ts'
 import { createJsonSerde } from './serde/index.ts'
@@ -12,6 +13,7 @@ import type {
   SerializedError,
   UpdateResultTTLResult
 } from './types.ts'
+import { abstractLogger } from './utils/logging.ts'
 import { parseState } from './utils/state.ts'
 
 interface ProducerConfig<TPayload, TResult> {
@@ -20,6 +22,7 @@ interface ProducerConfig<TPayload, TResult> {
   resultSerde?: Serde<TResult>
   maxRetries?: number
   resultTTL?: number
+  logger?: Logger
 }
 
 /**
@@ -31,6 +34,7 @@ export class Producer<TPayload, TResult> {
   #resultSerde: Serde<TResult>
   #maxRetries: number
   #resultTTL: number
+  #logger: Logger
 
   constructor (config: ProducerConfig<TPayload, TResult>) {
     this.#storage = config.storage
@@ -38,6 +42,7 @@ export class Producer<TPayload, TResult> {
     this.#resultSerde = config.resultSerde ?? createJsonSerde<TResult>()
     this.#maxRetries = config.maxRetries ?? 3
     this.#resultTTL = config.resultTTL ?? 3600000 // 1 hour
+    this.#logger = (config.logger ?? abstractLogger).child({ component: 'producer' })
   }
 
   /**
@@ -48,6 +53,7 @@ export class Producer<TPayload, TResult> {
     const maxAttempts = options?.maxAttempts ?? this.#maxRetries
     const resultTTL = options?.resultTTL ?? this.#resultTTL
 
+    this.#logger.trace({ id, maxAttempts, resultTTL }, 'Enqueue requested.')
     this.#validateResultTTL(resultTTL)
 
     const message: QueueMessage<TPayload> = {
@@ -64,10 +70,12 @@ export class Producer<TPayload, TResult> {
 
     if (existingState) {
       const { status } = parseState(existingState)
+      this.#logger.debug({ id, status }, 'Duplicate enqueue detected.')
 
       if (status === 'completed') {
         const result = await this.getResult(id)
         if (result !== null) {
+          this.#logger.debug({ id }, 'Returning cached completed result.')
           return { status: 'completed', result }
         }
       }
@@ -75,6 +83,7 @@ export class Producer<TPayload, TResult> {
       return { status: 'duplicate', existingState: status }
     }
 
+    this.#logger.debug({ id }, 'Job enqueued.')
     return { status: 'queued' }
   }
 
@@ -83,11 +92,13 @@ export class Producer<TPayload, TResult> {
    */
   async enqueueAndWait (id: string, payload: TPayload, options?: EnqueueAndWaitOptions): Promise<TResult> {
     const timeout = options?.timeout ?? 30000
+    this.#logger.trace({ id, timeout }, 'EnqueueAndWait requested.')
 
     // Subscribe BEFORE enqueue to avoid race conditions
     const { promise: resultPromise, resolve: resolveResult, reject: rejectResult } = Promise.withResolvers<TResult>()
 
     const unsubscribe = await this.#storage.subscribeToJob(id, async status => {
+      this.#logger.trace({ id, status }, 'Received job notification.')
       if (status === 'completed') {
         const result = await this.getResult(id)
         if (result !== null) {
@@ -108,6 +119,7 @@ export class Producer<TPayload, TResult> {
 
       // If already completed, return cached result immediately
       if (enqueueResult.status === 'completed') {
+        this.#logger.debug({ id }, 'EnqueueAndWait resolved from cached result.')
         return enqueueResult.result
       }
 
@@ -115,16 +127,20 @@ export class Producer<TPayload, TResult> {
       if (enqueueResult.status === 'duplicate' && enqueueResult.existingState === 'failed') {
         const error = await this.#storage.getError(id)
         const errorMessage = error ? error.toString() : 'Job failed'
+        this.#logger.warn({ id }, 'EnqueueAndWait found already failed duplicate job.')
         throw new JobFailedError(id, errorMessage)
       }
 
       // Wait for result with timeout
       const { promise: timeoutPromise, reject: rejectTimeout } = Promise.withResolvers<never>()
       timeoutId = setTimeout(() => {
+        this.#logger.warn({ id, timeout }, 'EnqueueAndWait timed out.')
         rejectTimeout(new TimeoutError(id, timeout))
       }, timeout)
 
-      return await Promise.race([resultPromise, timeoutPromise])
+      const result = await Promise.race([resultPromise, timeoutPromise])
+      this.#logger.debug({ id }, 'EnqueueAndWait resolved.')
+      return result
     } finally {
       if (timeoutId !== undefined) {
         clearTimeout(timeoutId)
@@ -137,9 +153,11 @@ export class Producer<TPayload, TResult> {
    * Cancel a pending job
    */
   async cancel (id: string): Promise<CancelResult> {
+    this.#logger.trace({ id }, 'Cancel requested.')
     const state = await this.#storage.getJobState(id)
 
     if (!state) {
+      this.#logger.trace({ id }, 'Cancel target not found.')
       return { status: 'not_found' }
     }
 
@@ -156,6 +174,7 @@ export class Producer<TPayload, TResult> {
     // Can cancel if queued or failing
     const deleted = await this.#storage.deleteJob(id)
     if (deleted) {
+      this.#logger.debug({ id }, 'Job cancelled.')
       return { status: 'cancelled' }
     }
 
@@ -170,6 +189,7 @@ export class Producer<TPayload, TResult> {
     if (!resultBuffer) {
       return null
     }
+    this.#logger.trace({ id }, 'Deserializing job result.')
     return this.#resultSerde.deserialize(resultBuffer)
   }
 
@@ -177,6 +197,7 @@ export class Producer<TPayload, TResult> {
    * Update TTL for a terminal job payload (result for completed jobs, error for failed jobs).
    */
   async updateResultTTL (id: string, ttlMs: number): Promise<UpdateResultTTLResult> {
+    this.#logger.trace({ id, ttlMs }, 'UpdateResultTTL requested.')
     this.#validateResultTTL(ttlMs)
 
     const state = await this.#storage.getJobState(id)
@@ -187,23 +208,28 @@ export class Producer<TPayload, TResult> {
     const { status } = parseState(state)
 
     if (status !== 'completed' && status !== 'failed') {
+      this.#logger.debug({ id, status }, 'UpdateResultTTL rejected for non-terminal job.')
       return { status: 'not_terminal' }
     }
 
     if (status === 'completed') {
       const existingResult = await this.#storage.getResult(id)
       if (!existingResult) {
+        this.#logger.warn({ id }, 'UpdateResultTTL missing completed payload.')
         return { status: 'missing_payload' }
       }
       await this.#storage.setResult(id, existingResult, ttlMs)
+      this.#logger.debug({ id, ttlMs }, 'Updated completed payload TTL.')
       return { status: 'updated' }
     }
 
     const existingError = await this.#storage.getError(id)
     if (!existingError) {
+      this.#logger.warn({ id }, 'UpdateResultTTL missing failed payload.')
       return { status: 'missing_payload' }
     }
     await this.#storage.setError(id, existingError, ttlMs)
+    this.#logger.debug({ id, ttlMs }, 'Updated failed payload TTL.')
     return { status: 'updated' }
   }
 
@@ -247,6 +273,7 @@ export class Producer<TPayload, TResult> {
 
   #validateResultTTL (resultTTL: number): void {
     if (!Number.isFinite(resultTTL) || !Number.isInteger(resultTTL) || resultTTL <= 0) {
+      this.#logger.error({ resultTTL }, 'Invalid resultTTL provided.')
       throw new TypeError('resultTTL must be a positive integer in milliseconds')
     }
   }
