@@ -1,23 +1,23 @@
-import { EventEmitter } from 'node:events'
 import { randomUUID } from 'node:crypto'
+import { EventEmitter } from 'node:events'
 import type { Logger } from 'pino'
-import type { Storage } from './storage/types.ts'
-import type { Serde } from './serde/index.ts'
-import type {
-  QueueConfig,
-  EnqueueOptions,
-  EnqueueAndWaitOptions,
-  EnqueueResult,
-  CancelResult,
-  MessageStatus,
-  UpdateResultTTLResult,
-  JobHandler,
-  QueueEvents,
-  AfterExecutionHook
-} from './types.ts'
-import { Producer } from './producer.ts'
 import { Consumer } from './consumer.ts'
+import { Producer } from './producer.ts'
+import type { Serde } from './serde/index.ts'
 import { createJsonSerde } from './serde/index.ts'
+import type { Storage } from './storage/types.ts'
+import type {
+  AfterExecutionHook,
+  CancelResult,
+  EnqueueAndWaitOptions,
+  EnqueueOptions,
+  EnqueueResult,
+  JobHandler,
+  MessageStatus,
+  QueueConfig,
+  QueueEvents,
+  UpdateResultTTLResult
+} from './types.ts'
 import { abstractLogger, ensureLoggableError } from './utils/logging.ts'
 
 /**
@@ -204,8 +204,7 @@ export class Queue<TPayload, TResult = void> extends EventEmitter<QueueEvents<TR
 
     // Forward consumer events
     this.#consumer.on('error', error => {
-      this.#logger.error({ err: ensureLoggableError(error) }, 'Consumer emitted error.')
-      this.emit('error', error)
+      this.#emitError(error, 'Consumer emitted error.')
     })
 
     this.#consumer.on('completed', (id, result) => {
@@ -230,9 +229,18 @@ export class Queue<TPayload, TResult = void> extends EventEmitter<QueueEvents<TR
 
     this.#consumer.execute(this.#handler)
     this.#consumer.start().catch(err => {
-      const error = err instanceof Error ? err : new Error(String(err))
-      this.#logger.error({ err: ensureLoggableError(error) }, 'Failed to start consumer.')
-      this.emit('error', error)
+      this.#emitError(err, 'Failed to start consumer.')
     })
+  }
+
+  #emitError (err: unknown, message: string): void {
+    const error = err instanceof Error ? err : new Error(String(err))
+
+    if (this.listenerCount('error') > 0) {
+      this.emit('error', error)
+      return
+    }
+
+    this.#logger.error({ err: ensureLoggableError(error) }, message)
   }
 }

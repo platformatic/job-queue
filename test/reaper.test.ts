@@ -1,6 +1,7 @@
 import { describe, it, beforeEach, afterEach } from 'node:test'
 import assert from 'node:assert'
 import { setTimeout as sleep } from 'node:timers/promises'
+import type { Logger } from 'pino'
 import { Queue, Reaper, MemoryStorage, type Job } from '../src/index.ts'
 import { once, waitForEvents } from './helpers/events.ts'
 
@@ -50,6 +51,36 @@ describe('Reaper', () => {
       await reaper.start()
       await reaper.stop()
       await reaper.stop()
+    })
+
+    it('should log errors when no reaper error listeners are registered', async () => {
+      const logs: string[] = []
+      const logger: Logger = {
+        fatal: () => {},
+        error: () => {
+          logs.push('error')
+        },
+        warn: () => {},
+        info: () => {},
+        debug: () => {},
+        trace: () => {},
+        child () {
+          return this
+        }
+      } as unknown as Logger
+
+      const localReaper = new Reaper<{ value: number }>({
+        storage,
+        visibilityTimeout: 100,
+        leaderElection: { enabled: true },
+        logger
+      })
+
+      await storage.connect()
+      await localReaper.start()
+      await localReaper.stop()
+
+      assert.ok(logs.includes('error'))
     })
   })
 
