@@ -1,6 +1,6 @@
 {
   "name": "@platformatic/job-queue",
-  "version": "0.2.0",
+  "version": "0.3.0",
   "description": "A reliable job queue with deduplication, request/response support, and pluggable storage",
   "homepage": "https://github.com/platformatic/job-queue",
   "author": "Platformatic Inc. <oss@platformatic.dev> (https://platformatic.dev)",
