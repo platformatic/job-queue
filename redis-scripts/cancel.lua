@@ -5,6 +5,8 @@
 
 local deleted = redis.call('HDEL', KEYS[1], ARGV[1])
 if deleted == 1 then
+  -- Also clean up expiry field
+  redis.call('HDEL', KEYS[1], ARGV[1] .. ':exp')
   redis.call('PUBLISH', 'job:events', ARGV[1] .. ':cancelled')
   return 1
 end

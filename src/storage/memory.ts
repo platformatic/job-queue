@@ -23,6 +23,7 @@ export class MemoryStorage implements Storage {
   #queue: Buffer[] = []
   #processingQueues: Map<string, Buffer[]> = new Map()
   #jobs: Map<string, string> = new Map()
+  #jobExpiry: Map<string, number> = new Map()
   #results: Map<string, StoredResult> = new Map()
   #errors: Map<string, StoredResult> = new Map()
   #workers: Map<string, WorkerInfo> = new Map()
@@ -68,7 +69,13 @@ export class MemoryStorage implements Storage {
   async enqueue (id: string, message: Buffer, timestamp: number): Promise<string | null> {
     const existing = this.#jobs.get(id)
     if (existing) {
-      return existing
+      const expiry = this.#jobExpiry.get(id)
+      if (expiry && Date.now() >= expiry) {
+        this.#jobs.delete(id)
+        this.#jobExpiry.delete(id)
+      } else {
+        return existing
+      }
     }
 
     this.#jobs.set(id, `queued:${timestamp}`)
@@ -159,7 +166,17 @@ export class MemoryStorage implements Storage {
   }
 
   async getJobState (id: string): Promise<string | null> {
-    return this.#jobs.get(id) ?? null
+    const state = this.#jobs.get(id)
+    if (!state) return null
+
+    const expiry = this.#jobExpiry.get(id)
+    if (expiry && Date.now() >= expiry) {
+      this.#jobs.delete(id)
+      this.#jobExpiry.delete(id)
+      return null
+    }
+
+    return state
   }
 
   async setJobState (id: string, state: string): Promise<void> {
@@ -169,6 +186,7 @@ export class MemoryStorage implements Storage {
   async deleteJob (id: string): Promise<boolean> {
     const existed = this.#jobs.has(id)
     this.#jobs.delete(id)
+    this.#jobExpiry.delete(id)
 
     if (existed) {
       this.#eventEmitter.emit('event', id, 'cancelled')
@@ -180,9 +198,13 @@ export class MemoryStorage implements Storage {
   async getJobStates (ids: string[]): Promise<Map<string, string | null>> {
     const result = new Map<string, string | null>()
     for (const id of ids) {
-      result.set(id, this.#jobs.get(id) ?? null)
+      result.set(id, await this.getJobState(id))
     }
     return result
+  }
+
+  async setJobExpiry (id: string, ttlMs: number): Promise<void> {
+    this.#jobExpiry.set(id, Date.now() + ttlMs)
   }
 
   async setResult (id: string, result: Buffer, ttlMs: number): Promise<void> {
@@ -285,6 +307,9 @@ export class MemoryStorage implements Storage {
     // Set state to completed
     this.#jobs.set(id, `completed:${timestamp}`)
 
+    // Set dedup expiry
+    this.#jobExpiry.set(id, timestamp + resultTTL)
+
     // Store result
     await this.setResult(id, result, resultTTL)
 
@@ -303,6 +328,9 @@ export class MemoryStorage implements Storage {
 
     // Set state to failed
     this.#jobs.set(id, `failed:${timestamp}`)
+
+    // Set dedup expiry
+    this.#jobExpiry.set(id, timestamp + errorTTL)
 
     // Store error
     await this.setError(id, error, errorTTL)
@@ -336,6 +364,14 @@ export class MemoryStorage implements Storage {
   #cleanupExpired (): void {
     const now = Date.now()
 
+    // Clean expired job entries
+    for (const [id, expiresAt] of this.#jobExpiry) {
+      if (now >= expiresAt) {
+        this.#jobs.delete(id)
+        this.#jobExpiry.delete(id)
+      }
+    }
+
     // Clean expired results
     for (const [id, stored] of this.#results) {
       if (now > stored.expiresAt) {
@@ -365,6 +401,7 @@ export class MemoryStorage implements Storage {
     this.#queue = []
     this.#processingQueues.clear()
     this.#jobs.clear()
+    this.#jobExpiry.clear()
     this.#results.clear()
     this.#errors.clear()
     this.#workers.clear()

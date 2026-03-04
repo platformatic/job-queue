@@ -301,7 +301,22 @@ export class FileStorage implements Storage {
     // Check if job already exists
     try {
       const existing = await readFile(jobFile, 'utf8')
-      return existing
+
+      // Check if the job has a dedup expiry and if it has passed
+      try {
+        const ttlPath = join(this.#jobsPath, `${id}.ttl`)
+        const expiresAt = parseInt(await readFile(ttlPath, 'utf8'), 10)
+        if (Date.now() >= expiresAt) {
+          // Expired: remove both files and fall through to enqueue as new
+          await unlink(jobFile).catch(() => {})
+          await unlink(ttlPath).catch(() => {})
+        } else {
+          return existing
+        }
+      } catch {
+        // No ttl file means no expiry — always block
+        return existing
+      }
     } catch {
       // Job doesn't exist, continue
     }
@@ -375,7 +390,22 @@ export class FileStorage implements Storage {
 
   async getJobState (id: string): Promise<string | null> {
     try {
-      return await readFile(join(this.#jobsPath, `${id}.state`), 'utf8')
+      const state = await readFile(join(this.#jobsPath, `${id}.state`), 'utf8')
+
+      // Check dedup expiry
+      try {
+        const ttlPath = join(this.#jobsPath, `${id}.ttl`)
+        const expiresAt = parseInt(await readFile(ttlPath, 'utf8'), 10)
+        if (Date.now() >= expiresAt) {
+          await unlink(join(this.#jobsPath, `${id}.state`)).catch(() => {})
+          await unlink(ttlPath).catch(() => {})
+          return null
+        }
+      } catch {
+        // No ttl file — not expired
+      }
+
+      return state
     } catch {
       return null
     }
@@ -388,6 +418,7 @@ export class FileStorage implements Storage {
   async deleteJob (id: string): Promise<boolean> {
     try {
       await unlink(join(this.#jobsPath, `${id}.state`))
+      await unlink(join(this.#jobsPath, `${id}.ttl`)).catch(() => {})
       this.#eventEmitter.emit('event', id, 'cancelled')
       return true
     } catch {
@@ -403,6 +434,12 @@ export class FileStorage implements Storage {
     }
 
     return result
+  }
+
+  async setJobExpiry (id: string, ttlMs: number): Promise<void> {
+    const ttlPath = join(this.#jobsPath, `${id}.ttl`)
+    const expiresAt = Date.now() + ttlMs
+    await this.#writeFileAtomic(ttlPath, expiresAt.toString())
   }
 
   async setResult (id: string, result: Buffer, ttlMs: number): Promise<void> {
@@ -567,6 +604,9 @@ export class FileStorage implements Storage {
     // Set state to completed
     await this.setJobState(id, `completed:${timestamp}`)
 
+    // Set dedup expiry
+    await this.setJobExpiry(id, resultTTL)
+
     // Store result
     await this.setResult(id, result, resultTTL)
 
@@ -585,6 +625,9 @@ export class FileStorage implements Storage {
 
     // Set state to failed
     await this.setJobState(id, `failed:${timestamp}`)
+
+    // Set dedup expiry
+    await this.setJobExpiry(id, errorTTL)
 
     // Store error
     await this.setError(id, error, errorTTL)
@@ -617,6 +660,26 @@ export class FileStorage implements Storage {
 
   async #cleanupExpired (): Promise<void> {
     const now = Date.now()
+
+    // Clean expired job entries
+    try {
+      const jobFiles = await readdir(this.#jobsPath)
+      for (const file of jobFiles) {
+        if (!file.endsWith('.ttl')) continue
+        const id = file.replace('.ttl', '')
+        try {
+          const expiresAt = parseInt(await readFile(join(this.#jobsPath, file), 'utf8'), 10)
+          if (now >= expiresAt) {
+            await unlink(join(this.#jobsPath, `${id}.state`)).catch(() => {})
+            await unlink(join(this.#jobsPath, file)).catch(() => {})
+          }
+        } catch {
+          // Ignore errors
+        }
+      }
+    } catch {
+      // Ignore errors
+    }
 
     // Clean expired results
     try {

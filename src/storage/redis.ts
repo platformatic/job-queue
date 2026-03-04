@@ -241,11 +241,25 @@ export class RedisStorage implements Storage {
 
   async getJobState (id: string): Promise<string | null> {
     const state = await this.#client!.hget(this.#jobsKey(), id)
+    if (!state) return null
+
+    // Check dedup expiry
+    const expiry = await this.#client!.hget(this.#jobsKey(), `${id}:exp`)
+    if (expiry && Date.now() >= parseInt(expiry, 10)) {
+      await this.#client!.hdel(this.#jobsKey(), id, `${id}:exp`)
+      return null
+    }
+
     return state
   }
 
   async setJobState (id: string, state: string): Promise<void> {
     await this.#client!.hset(this.#jobsKey(), id, state)
+  }
+
+  async setJobExpiry (id: string, ttlMs: number): Promise<void> {
+    const expiresAt = Date.now() + ttlMs
+    await this.#client!.hset(this.#jobsKey(), `${id}:exp`, expiresAt.toString())
   }
 
   async deleteJob (id: string): Promise<boolean> {
@@ -258,11 +272,30 @@ export class RedisStorage implements Storage {
       return new Map()
     }
 
-    const states = await this.#client!.hmget(this.#jobsKey(), ...ids)
+    // Fetch both state and expiry fields for each id
+    const allKeys = ids.flatMap(id => [id, `${id}:exp`])
+    const values = await this.#client!.hmget(this.#jobsKey(), ...allKeys)
+
+    const now = Date.now()
     const result = new Map<string, string | null>()
+    const expiredFields: string[] = []
+
     for (let i = 0; i < ids.length; i++) {
-      result.set(ids[i], states[i])
+      const state = values[i * 2]
+      const expiry = values[i * 2 + 1]
+
+      if (state && expiry && now >= parseInt(expiry, 10)) {
+        expiredFields.push(ids[i], `${ids[i]}:exp`)
+        result.set(ids[i], null)
+      } else {
+        result.set(ids[i], state)
+      }
     }
+
+    if (expiredFields.length > 0) {
+      await this.#client!.hdel(this.#jobsKey(), ...expiredFields)
+    }
+
     return result
   }
 
