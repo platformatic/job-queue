@@ -12,6 +12,12 @@
 -- Set state to failed
 redis.call('HSET', KEYS[1], ARGV[1], ARGV[3])
 
+-- Set dedup expiry
+local now = redis.call('TIME')
+local nowMs = tonumber(now[1]) * 1000 + math.floor(tonumber(now[2]) / 1000)
+local expiresAt = nowMs + tonumber(ARGV[5])
+redis.call('HSET', KEYS[1], ARGV[1] .. ':exp', tostring(expiresAt))
+
 -- Store error with TTL
 redis.call('HSET', KEYS[2], ARGV[1], ARGV[4])
 redis.call('PEXPIRE', KEYS[2], ARGV[5])

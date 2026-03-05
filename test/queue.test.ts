@@ -675,7 +675,7 @@ describe('Queue', () => {
       assert.deepStrictEqual(updateResult, { status: 'not_terminal' })
     })
 
-    it('should return missing_payload when terminal payload has expired', async () => {
+    it('should return not_found when terminal payload and job state have expired', async () => {
       const localStorage = new MemoryStorage()
       const localQueue = new Queue<{ value: number }, { result: number }>({
         storage: localStorage,
@@ -693,8 +693,10 @@ describe('Queue', () => {
 
       await sleep(60)
 
+      // After resultTTL expires, both the job state and result are cleaned up,
+      // so updateResultTTL returns not_found (the job ID can be re-enqueued)
       const updateResult = await localQueue.updateResultTTL('job-1', 100)
-      assert.deepStrictEqual(updateResult, { status: 'missing_payload' })
+      assert.deepStrictEqual(updateResult, { status: 'not_found' })
 
       await localQueue.stop()
     })

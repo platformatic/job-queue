@@ -213,6 +213,12 @@ export interface Storage {
    */
   releaseLeaderLock? (lockKey: string, ownerId: string): Promise<boolean>
 
+  /**
+   * Set the dedup expiry for a terminal job.
+   * After ttlMs elapses, the job ID can be re-enqueued.
+   */
+  setJobExpiry (id: string, ttlMs: number): Promise<void>
+
   // ═══════════════════════════════════════════════════════════════════
   // ATOMIC OPERATIONS (Lua scripts in Redis)
   // ═══════════════════════════════════════════════════════════════════

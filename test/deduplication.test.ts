@@ -222,4 +222,129 @@ describe('Deduplication', () => {
       await shortTtlQueue.stop()
     })
   })
+
+  describe('dedup expiry', () => {
+    it('should allow re-enqueue after resultTTL expires for completed job', async () => {
+      const shortTtlStorage = new MemoryStorage()
+      const shortTtlQueue = new Queue<{ value: number }, { result: number }>({
+        storage: shortTtlStorage,
+        resultTTL: 50, // 50ms TTL
+        concurrency: 1,
+        visibilityTimeout: 5000
+      })
+
+      let callCount = 0
+      shortTtlQueue.execute(async (job: Job<{ value: number }>) => {
+        callCount++
+        return { result: job.payload.value * callCount }
+      })
+
+      await shortTtlQueue.start()
+
+      // Complete first job
+      const result1 = await shortTtlQueue.enqueueAndWait('job-1', { value: 10 }, { timeout: 5000 })
+      assert.deepStrictEqual(result1, { result: 10 })
+      assert.strictEqual(callCount, 1)
+
+      // Wait for TTL to expire
+      await sleep(100)
+
+      // Re-enqueue same ID — should succeed now
+      const result2 = await shortTtlQueue.enqueueAndWait('job-1', { value: 10 }, { timeout: 5000 })
+      assert.deepStrictEqual(result2, { result: 20 })
+      assert.strictEqual(callCount, 2)
+
+      await shortTtlQueue.stop()
+    })
+
+    it('should allow re-enqueue after errorTTL expires for failed job', async () => {
+      const shortTtlStorage = new MemoryStorage()
+      const shortTtlQueue = new Queue<{ value: number }, { result: number }>({
+        storage: shortTtlStorage,
+        resultTTL: 50, // 50ms TTL
+        concurrency: 1,
+        visibilityTimeout: 5000
+      })
+
+      let shouldFail = true
+      shortTtlQueue.execute(async (job: Job<{ value: number }>) => {
+        if (shouldFail) {
+          throw new Error('Intentional failure')
+        }
+        return { result: job.payload.value * 2 }
+      })
+
+      await shortTtlQueue.start()
+
+      // Enqueue and wait for failure
+      const failedPromise = once(shortTtlQueue, 'failed')
+      await shortTtlQueue.enqueue('job-1', { value: 42 })
+      await failedPromise
+
+      // Verify it's a duplicate while within TTL
+      const dupResult = await shortTtlQueue.enqueue('job-1', { value: 42 })
+      assert.strictEqual(dupResult.status, 'duplicate')
+
+      // Wait for TTL to expire
+      await sleep(100)
+
+      // Now re-enqueue should work
+      shouldFail = false
+      const result = await shortTtlQueue.enqueueAndWait('job-1', { value: 42 }, { timeout: 5000 })
+      assert.deepStrictEqual(result, { result: 84 })
+
+      await shortTtlQueue.stop()
+    })
+
+    it('should still block re-enqueue within TTL window', async () => {
+      const shortTtlStorage = new MemoryStorage()
+      const shortTtlQueue = new Queue<{ value: number }, { result: number }>({
+        storage: shortTtlStorage,
+        resultTTL: 5000, // 5s TTL — won't expire during this test
+        concurrency: 1,
+        visibilityTimeout: 5000
+      })
+
+      shortTtlQueue.execute(async (job: Job<{ value: number }>) => {
+        return { result: job.payload.value * 2 }
+      })
+
+      await shortTtlQueue.start()
+
+      // Complete first job
+      const result1 = await shortTtlQueue.enqueueAndWait('job-1', { value: 21 }, { timeout: 5000 })
+      assert.deepStrictEqual(result1, { result: 42 })
+
+      // Re-enqueue immediately — should return cached result (dedup still active)
+      const result2 = await shortTtlQueue.enqueue('job-1', { value: 99 })
+      assert.strictEqual(result2.status, 'completed')
+      if (result2.status === 'completed') {
+        assert.deepStrictEqual(result2.result, { result: 42 })
+      }
+
+      await shortTtlQueue.stop()
+    })
+
+    it('should return null from getJobState after expiry', async () => {
+      const shortTtlStorage = new MemoryStorage()
+      await shortTtlStorage.connect()
+
+      // Simulate a completed job with short TTL
+      await shortTtlStorage.enqueue('job-1', Buffer.from('test'), Date.now())
+      await shortTtlStorage.completeJob('job-1', Buffer.from('test'), 'worker-1', Buffer.from('result'), 50)
+
+      // State should exist within TTL
+      const state1 = await shortTtlStorage.getJobState('job-1')
+      assert.ok(state1?.startsWith('completed:'))
+
+      // Wait for TTL to expire
+      await sleep(100)
+
+      // State should be null after expiry
+      const state2 = await shortTtlStorage.getJobState('job-1')
+      assert.strictEqual(state2, null)
+
+      await shortTtlStorage.disconnect()
+    })
+  })
 })

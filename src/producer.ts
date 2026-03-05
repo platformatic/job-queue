@@ -219,6 +219,7 @@ export class Producer<TPayload, TResult> {
         return { status: 'missing_payload' }
       }
       await this.#storage.setResult(id, existingResult, ttlMs)
+      await this.#storage.setJobExpiry(id, ttlMs)
       this.#logger.debug({ id, ttlMs }, 'Updated completed payload TTL.')
       return { status: 'updated' }
     }
@@ -229,6 +230,7 @@ export class Producer<TPayload, TResult> {
       return { status: 'missing_payload' }
     }
     await this.#storage.setError(id, existingError, ttlMs)
+    await this.#storage.setJobExpiry(id, ttlMs)
     this.#logger.debug({ id, ttlMs }, 'Updated failed payload TTL.')
     return { status: 'updated' }
   }
