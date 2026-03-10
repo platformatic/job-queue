@@ -40,6 +40,14 @@ export class RedisStorage implements Storage {
   #eventSubscription: boolean = false
   #logger: Logger
 
+  // Namespace support
+  #parentStorage: RedisStorage | null = null // set for namespace views
+  #refCount: number = 0 // for root instance
+
+  // PubSub handlers for namespace views (needed for cleanup on disconnect)
+  #messageHandler: ((channel: string, message: string) => void) | null = null
+  #pmessageHandler: ((_pattern: string, channel: string, message: string) => void) | null = null
+
   constructor (config: RedisStorageConfig = {}) {
     this.#url = config.url ?? process.env.REDIS_URL ?? 'redis://localhost:6379'
     this.#keyPrefix = config.keyPrefix ?? 'jq:'
@@ -103,7 +111,32 @@ export class RedisStorage implements Storage {
   }
 
   async connect (): Promise<void> {
-    if (this.#client) return
+    // Namespace view: connect parent and copy shared clients
+    if (this.#parentStorage) {
+      if (this.#client) return // already connected
+      await this.#parentStorage.connect()
+
+      // Copy shared clients and scripts from parent
+      this.#client = this.#parentStorage.#client
+      this.#blockingClient = this.#parentStorage.#blockingClient
+      this.#subscriber = this.#parentStorage.#subscriber
+      this.#scriptSHAs = this.#parentStorage.#scriptSHAs
+
+      // Register own message handlers on shared subscriber
+      this.#messageHandler = (channel: string, message: string) => {
+        this.#handlePubSubMessage(channel, message)
+      }
+      this.#pmessageHandler = (_pattern: string, channel: string, message: string) => {
+        this.#handlePubSubMessage(channel, message)
+      }
+      this.#subscriber!.on('message', this.#messageHandler)
+      this.#subscriber!.on('pmessage', this.#pmessageHandler)
+      return
+    }
+
+    // Root instance: create clients if needed, increment ref count
+    this.#refCount++
+    if (this.#client) return // already connected, just increment ref count
 
     const redisModule = await loadOptionalDependency<{ Redis: new (url: string) => Redis }>('iovalkey', 'RedisStorage')
 
@@ -114,18 +147,54 @@ export class RedisStorage implements Storage {
     // Load Lua scripts
     await this.#loadScripts()
 
-    // Set up pub/sub message handler
-    this.#subscriber.on('message', (channel: string, message: string) => {
+    // Set up pub/sub message handler for root
+    this.#messageHandler = (channel: string, message: string) => {
       this.#handlePubSubMessage(channel, message)
-    })
-
-    this.#subscriber.on('pmessage', (_pattern: string, channel: string, message: string) => {
+    }
+    this.#pmessageHandler = (_pattern: string, channel: string, message: string) => {
       this.#handlePubSubMessage(channel, message)
-    })
+    }
+    this.#subscriber.on('message', this.#messageHandler)
+    this.#subscriber.on('pmessage', this.#pmessageHandler)
   }
 
   async disconnect (): Promise<void> {
+    // Namespace view: remove own handlers, null references, disconnect parent
+    if (this.#parentStorage) {
+      if (this.#subscriber && this.#messageHandler) {
+        this.#subscriber.off('message', this.#messageHandler)
+      }
+      if (this.#subscriber && this.#pmessageHandler) {
+        this.#subscriber.off('pmessage', this.#pmessageHandler)
+      }
+      this.#messageHandler = null
+      this.#pmessageHandler = null
+      this.#client = null
+      this.#blockingClient = null
+      this.#subscriber = null
+      this.#scriptSHAs = null
+
+      this.#eventEmitter.removeAllListeners()
+      this.#notifyEmitter.removeAllListeners()
+      this.#eventSubscription = false
+
+      await this.#parentStorage.disconnect()
+      return
+    }
+
+    // Root instance: decrement ref count, only destroy when 0
+    this.#refCount--
+    if (this.#refCount > 0) return
+
     if (this.#subscriber) {
+      if (this.#messageHandler) {
+        this.#subscriber.off('message', this.#messageHandler)
+      }
+      if (this.#pmessageHandler) {
+        this.#subscriber.off('pmessage', this.#pmessageHandler)
+      }
+      this.#messageHandler = null
+      this.#pmessageHandler = null
       this.#subscriber.disconnect()
       this.#subscriber = null
     }
@@ -501,6 +570,17 @@ export class RedisStorage implements Storage {
       await this.notifyJobComplete(id, 'failing')
       await this.publishEvent(id, 'failing')
     }
+  }
+
+  createNamespace (name: string): Storage {
+    const root = this.#parentStorage ?? this
+    const ns = new RedisStorage({
+      url: root.#url,
+      keyPrefix: `${this.#keyPrefix}${name}:`,
+      logger: this.#logger
+    })
+    ns.#parentStorage = root
+    return ns
   }
 
   /**

@@ -219,6 +219,13 @@ export interface Storage {
    */
   setJobExpiry (id: string, ttlMs: number): Promise<void>
 
+  /**
+   * Create a namespaced view of this storage.
+   * The returned storage shares the same underlying connections (where applicable)
+   * but uses a different key prefix, providing isolated queues on the same backend.
+   */
+  createNamespace (name: string): Storage
+
   // ═══════════════════════════════════════════════════════════════════
   // ATOMIC OPERATIONS (Lua scripts in Redis)
   // ═══════════════════════════════════════════════════════════════════
