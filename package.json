@@ -47,7 +47,8 @@
   },
   "optionalDependencies": {
     "fast-write-atomic": "^0.4.0",
-    "iovalkey": "^0.2.0"
+    "iovalkey": "^0.2.0",
+    "pg": "^8.20.0"
   },
   "devDependencies": {
     "@platformatic/flame": "^1.6.0",

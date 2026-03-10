@@ -36,6 +36,7 @@ export type { Storage } from './storage/types.ts'
 export { MemoryStorage } from './storage/memory.ts'
 export { RedisStorage } from './storage/redis.ts'
 export { FileStorage } from './storage/file.ts'
+export { PgStorage } from './storage/pg.ts'
 
 // Queue
 export { Queue } from './queue.ts'
