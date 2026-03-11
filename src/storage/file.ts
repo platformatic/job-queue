@@ -846,6 +846,10 @@ export class FileStorage implements Storage {
     }
   }
 
+  createNamespace (name: string): Storage {
+    return new FileStorage({ basePath: join(this.#basePath, name) })
+  }
+
   /**
    * Clear all data (useful for testing)
    */
