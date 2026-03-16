@@ -33,8 +33,8 @@ interface PgClient {
   query (text: string, values?: unknown[]): Promise<PgQueryResult>
   connect (): Promise<void>
   end (): Promise<void>
-  on (event: string, handler: (...args: unknown[]) => void): void
-  off (event: string, handler: (...args: unknown[]) => void): void
+  on (event: string, handler: (...args: any[]) => void): void
+  off (event: string, handler: (...args: any[]) => void): void
 }
 
 interface PgNotification {
