@@ -114,6 +114,7 @@ export class RedisStorage implements Storage {
     // Namespace view: connect parent and copy shared clients
     if (this.#parentStorage) {
       if (this.#client) return // already connected
+      this.#parentStorage.#refCount++
       await this.#parentStorage.connect()
 
       // Copy shared clients and scripts from parent
@@ -134,9 +135,8 @@ export class RedisStorage implements Storage {
       return
     }
 
-    // Root instance: create clients if needed, increment ref count
-    this.#refCount++
-    if (this.#client) return // already connected, just increment ref count
+    // Root instance: idempotent connect (no ref count for direct callers)
+    if (this.#client) return
 
     const redisModule = await loadOptionalDependency<{ Redis: new (url: string) => Redis }>('iovalkey', 'RedisStorage')
 
@@ -159,7 +159,7 @@ export class RedisStorage implements Storage {
   }
 
   async disconnect (): Promise<void> {
-    // Namespace view: remove own handlers, null references, disconnect parent
+    // Namespace view: remove own handlers, null references, release parent ref
     if (this.#parentStorage) {
       if (this.#subscriber && this.#messageHandler) {
         this.#subscriber.off('message', this.#messageHandler)
@@ -178,12 +178,11 @@ export class RedisStorage implements Storage {
       this.#notifyEmitter.removeAllListeners()
       this.#eventSubscription = false
 
-      await this.#parentStorage.disconnect()
+      this.#parentStorage.#refCount--
       return
     }
 
-    // Root instance: decrement ref count, only destroy when 0
-    this.#refCount--
+    // Root instance: only destroy when no namespace children are connected
     if (this.#refCount > 0) return
 
     if (this.#subscriber) {

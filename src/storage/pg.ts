@@ -133,6 +133,7 @@ export class PgStorage implements Storage {
     // Namespace view: connect parent and share pool/listener
     if (this.#parentStorage) {
       if (this.#pool) return // already connected
+      this.#parentStorage.#refCount++
       await this.#parentStorage.connect()
 
       this.#pool = this.#parentStorage.#pool
@@ -152,8 +153,7 @@ export class PgStorage implements Storage {
       return
     }
 
-    // Root instance: create pool/listener if needed, increment ref count
-    this.#refCount++
+    // Root instance: idempotent connect (no ref count for direct callers)
     if (this.#pool) return
 
     const pgModule = await loadOptionalDependency<PgModule>('pg', 'PgStorage')
@@ -209,12 +209,11 @@ export class PgStorage implements Storage {
       this.#notifyEmitter.removeAllListeners()
       this.#eventSubscription = false
 
-      await this.#parentStorage.disconnect()
+      this.#parentStorage.#refCount--
       return
     }
 
-    // Root instance
-    this.#refCount--
+    // Root instance: only destroy when no namespace children are connected
     if (this.#refCount > 0) return
 
     if (this.#listener) {
