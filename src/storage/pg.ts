@@ -102,7 +102,8 @@ export class PgStorage implements Storage {
   #newJobChannel: string
 
   constructor (config: PgStorageConfig = {}) {
-    this.#connectionString = config.connectionString ?? process.env.DATABASE_URL ?? 'postgresql://localhost:5432/job_queue'
+    this.#connectionString =
+      config.connectionString ?? process.env.DATABASE_URL ?? 'postgresql://localhost:5432/job_queue'
     this.#tablePrefix = config.tablePrefix ?? 'jq_'
     this.#logger = (config.logger ?? abstractLogger).child({ component: 'pg-storage', tablePrefix: this.#tablePrefix })
 
@@ -347,18 +348,20 @@ export class PgStorage implements Storage {
     // so concurrent fulfillment is safe
     const waiters = this.#dequeueWaiters.splice(0)
     for (const waiter of waiters) {
-      this.#tryDequeue(waiter.workerId).then(result => {
-        clearTimeout(waiter.timeoutId)
-        if (result) {
-          waiter.resolve(result)
-        } else {
-          // No job available, put waiter back
+      this.#tryDequeue(waiter.workerId)
+        .then(result => {
+          clearTimeout(waiter.timeoutId)
+          if (result) {
+            waiter.resolve(result)
+          } else {
+            // No job available, put waiter back
+            this.#dequeueWaiters.push(waiter)
+          }
+        })
+        .catch(() => {
+          // On error, put waiter back
           this.#dequeueWaiters.push(waiter)
-        }
-      }).catch(() => {
-        // On error, put waiter back
-        this.#dequeueWaiters.push(waiter)
-      })
+        })
     }
   }
 
@@ -393,22 +396,16 @@ export class PgStorage implements Storage {
       }
 
       // Insert new job
-      await client.query(
-        `INSERT INTO "${this.#jobsTable}" (id, state) VALUES ($1, $2)`,
-        [id, state]
-      )
+      await client.query(`INSERT INTO "${this.#jobsTable}" (id, state) VALUES ($1, $2)`, [id, state])
 
       // Push to queue
-      await client.query(
-        `INSERT INTO "${this.#queueTable}" (message) VALUES ($1)`,
-        [message]
-      )
+      await client.query(`INSERT INTO "${this.#queueTable}" (message) VALUES ($1)`, [message])
 
       await client.query('COMMIT')
 
       // Publish event and notify (outside transaction so NOTIFY fires immediately)
       await this.publishEvent(id, 'queued')
-      await this.#pool!.query(`SELECT pg_notify($1, '')`, [this.#newJobChannel])
+      await this.#pool!.query("SELECT pg_notify($1, '')", [this.#newJobChannel])
 
       return null
     } catch (err) {
@@ -440,7 +437,8 @@ export class PgStorage implements Storage {
 
   async #tryDequeue (workerId: string): Promise<Buffer | null> {
     // Atomic: delete from queue (SKIP LOCKED) + insert into processing
-    const result = await this.#pool!.query(`
+    const result = await this.#pool!.query(
+      `
       WITH deleted AS (
         DELETE FROM "${this.#queueTable}"
         WHERE seq = (
@@ -454,7 +452,9 @@ export class PgStorage implements Storage {
       INSERT INTO "${this.#processingTable}" (worker_id, message)
       SELECT $1, message FROM deleted
       RETURNING message
-    `, [workerId])
+    `,
+      [workerId]
+    )
 
     if (result.rows.length === 0) return null
     return result.rows[0].message as Buffer
@@ -466,22 +466,19 @@ export class PgStorage implements Storage {
       await client.query('BEGIN')
 
       // Remove from processing queue
-      await client.query(
-        `DELETE FROM "${this.#processingTable}" WHERE worker_id = $1 AND message = $2`,
-        [workerId, message]
-      )
+      await client.query(`DELETE FROM "${this.#processingTable}" WHERE worker_id = $1 AND message = $2`, [
+        workerId,
+        message
+      ])
 
       // Add to front of main queue (use seq = 0 trick won't work since BIGSERIAL auto-increments)
       // Just insert normally - ordering is by seq which is auto-increment
-      await client.query(
-        `INSERT INTO "${this.#queueTable}" (message) VALUES ($1)`,
-        [message]
-      )
+      await client.query(`INSERT INTO "${this.#queueTable}" (message) VALUES ($1)`, [message])
 
       await client.query('COMMIT')
 
       // Notify waiters
-      await this.#pool!.query(`SELECT pg_notify($1, '')`, [this.#newJobChannel])
+      await this.#pool!.query("SELECT pg_notify($1, '')", [this.#newJobChannel])
     } catch (err) {
       await client.query('ROLLBACK').catch(() => {})
       throw err
@@ -491,10 +488,10 @@ export class PgStorage implements Storage {
   }
 
   async ack (id: string, message: Buffer, workerId: string): Promise<void> {
-    await this.#pool!.query(
-      `DELETE FROM "${this.#processingTable}" WHERE worker_id = $1 AND message = $2`,
-      [workerId, message]
-    )
+    await this.#pool!.query(`DELETE FROM "${this.#processingTable}" WHERE worker_id = $1 AND message = $2`, [
+      workerId,
+      message
+    ])
   }
 
   // ═══════════════════════════════════════════════════════════════════
@@ -502,10 +499,7 @@ export class PgStorage implements Storage {
   // ═══════════════════════════════════════════════════════════════════
 
   async getJobState (id: string): Promise<string | null> {
-    const result = await this.#pool!.query(
-      `SELECT state, expires_at FROM "${this.#jobsTable}" WHERE id = $1`,
-      [id]
-    )
+    const result = await this.#pool!.query(`SELECT state, expires_at FROM "${this.#jobsTable}" WHERE id = $1`, [id])
 
     if (result.rows.length === 0) return null
 
@@ -520,17 +514,11 @@ export class PgStorage implements Storage {
   }
 
   async setJobState (id: string, state: string): Promise<void> {
-    await this.#pool!.query(
-      `UPDATE "${this.#jobsTable}" SET state = $2 WHERE id = $1`,
-      [id, state]
-    )
+    await this.#pool!.query(`UPDATE "${this.#jobsTable}" SET state = $2 WHERE id = $1`, [id, state])
   }
 
   async deleteJob (id: string): Promise<boolean> {
-    const result = await this.#pool!.query(
-      `DELETE FROM "${this.#jobsTable}" WHERE id = $1`,
-      [id]
-    )
+    const result = await this.#pool!.query(`DELETE FROM "${this.#jobsTable}" WHERE id = $1`, [id])
 
     if (result.rowCount && result.rowCount > 0) {
       await this.publishEvent(id, 'cancelled')
@@ -543,10 +531,9 @@ export class PgStorage implements Storage {
     const result = new Map<string, string | null>()
     if (ids.length === 0) return result
 
-    const rows = await this.#pool!.query(
-      `SELECT id, state, expires_at FROM "${this.#jobsTable}" WHERE id = ANY($1)`,
-      [ids]
-    )
+    const rows = await this.#pool!.query(`SELECT id, state, expires_at FROM "${this.#jobsTable}" WHERE id = ANY($1)`, [
+      ids
+    ])
 
     const now = Date.now()
     const found = new Set<string>()
@@ -567,10 +554,7 @@ export class PgStorage implements Storage {
 
     // Clean up expired entries
     if (expiredIds.length > 0) {
-      await this.#pool!.query(
-        `DELETE FROM "${this.#jobsTable}" WHERE id = ANY($1)`,
-        [expiredIds]
-      )
+      await this.#pool!.query(`DELETE FROM "${this.#jobsTable}" WHERE id = ANY($1)`, [expiredIds])
     }
 
     // Set null for IDs not found
@@ -585,10 +569,7 @@ export class PgStorage implements Storage {
 
   async setJobExpiry (id: string, ttlMs: number): Promise<void> {
     const expiresAt = Date.now() + ttlMs
-    await this.#pool!.query(
-      `UPDATE "${this.#jobsTable}" SET expires_at = $2 WHERE id = $1`,
-      [id, expiresAt]
-    )
+    await this.#pool!.query(`UPDATE "${this.#jobsTable}" SET expires_at = $2 WHERE id = $1`, [id, expiresAt])
   }
 
   // ═══════════════════════════════════════════════════════════════════
@@ -606,10 +587,7 @@ export class PgStorage implements Storage {
   }
 
   async getResult (id: string): Promise<Buffer | null> {
-    const result = await this.#pool!.query(
-      `SELECT data, expires_at FROM "${this.#resultsTable}" WHERE id = $1`,
-      [id]
-    )
+    const result = await this.#pool!.query(`SELECT data, expires_at FROM "${this.#resultsTable}" WHERE id = $1`, [id])
 
     if (result.rows.length === 0) return null
 
@@ -633,10 +611,7 @@ export class PgStorage implements Storage {
   }
 
   async getError (id: string): Promise<Buffer | null> {
-    const result = await this.#pool!.query(
-      `SELECT data, expires_at FROM "${this.#errorsTable}" WHERE id = $1`,
-      [id]
-    )
+    const result = await this.#pool!.query(`SELECT data, expires_at FROM "${this.#errorsTable}" WHERE id = $1`, [id])
 
     if (result.rows.length === 0) return null
 
@@ -669,29 +644,21 @@ export class PgStorage implements Storage {
 
   async unregisterWorker (workerId: string): Promise<void> {
     if (!this.#pool) return
-    await this.#pool.query(
-      `DELETE FROM "${this.#workersTable}" WHERE worker_id = $1`,
-      [workerId]
-    )
-    await this.#pool.query(
-      `DELETE FROM "${this.#processingTable}" WHERE worker_id = $1`,
-      [workerId]
-    )
+    await this.#pool.query(`DELETE FROM "${this.#workersTable}" WHERE worker_id = $1`, [workerId])
+    await this.#pool.query(`DELETE FROM "${this.#processingTable}" WHERE worker_id = $1`, [workerId])
   }
 
   async getWorkers (): Promise<string[]> {
-    const result = await this.#pool!.query(
-      `SELECT worker_id FROM "${this.#workersTable}" WHERE expires_at > $1`,
-      [Date.now()]
-    )
+    const result = await this.#pool!.query(`SELECT worker_id FROM "${this.#workersTable}" WHERE expires_at > $1`, [
+      Date.now()
+    ])
     return result.rows.map(row => row.worker_id as string)
   }
 
   async getProcessingJobs (workerId: string): Promise<Buffer[]> {
-    const result = await this.#pool!.query(
-      `SELECT message FROM "${this.#processingTable}" WHERE worker_id = $1`,
-      [workerId]
-    )
+    const result = await this.#pool!.query(`SELECT message FROM "${this.#processingTable}" WHERE worker_id = $1`, [
+      workerId
+    ])
     return result.rows.map(row => row.message as Buffer)
   }
 
@@ -712,10 +679,7 @@ export class PgStorage implements Storage {
   }
 
   async notifyJobComplete (id: string, status: 'completed' | 'failed' | 'failing'): Promise<void> {
-    await this.#pool!.query(
-      `SELECT pg_notify($1, $2)`,
-      [this.#notifyChannel, `${id}:${status}`]
-    )
+    await this.#pool!.query('SELECT pg_notify($1, $2)', [this.#notifyChannel, `${id}:${status}`])
   }
 
   // ═══════════════════════════════════════════════════════════════════
@@ -732,10 +696,7 @@ export class PgStorage implements Storage {
   }
 
   async publishEvent (id: string, event: string): Promise<void> {
-    await this.#pool!.query(
-      `SELECT pg_notify($1, $2)`,
-      [this.#eventsChannel, `${id}:${event}`]
-    )
+    await this.#pool!.query('SELECT pg_notify($1, $2)', [this.#eventsChannel, `${id}:${event}`])
   }
 
   // ═══════════════════════════════════════════════════════════════════
@@ -752,10 +713,11 @@ export class PgStorage implements Storage {
       await client.query('BEGIN')
 
       // Set state to completed + dedup expiry
-      await client.query(
-        `UPDATE "${this.#jobsTable}" SET state = $2, expires_at = $3 WHERE id = $1`,
-        [id, state, expiresAt]
-      )
+      await client.query(`UPDATE "${this.#jobsTable}" SET state = $2, expires_at = $3 WHERE id = $1`, [
+        id,
+        state,
+        expiresAt
+      ])
 
       // Store result
       await client.query(
@@ -766,10 +728,10 @@ export class PgStorage implements Storage {
       )
 
       // Remove from processing queue
-      await client.query(
-        `DELETE FROM "${this.#processingTable}" WHERE worker_id = $1 AND message = $2`,
-        [workerId, message]
-      )
+      await client.query(`DELETE FROM "${this.#processingTable}" WHERE worker_id = $1 AND message = $2`, [
+        workerId,
+        message
+      ])
 
       await client.query('COMMIT')
     } catch (err) {
@@ -794,10 +756,11 @@ export class PgStorage implements Storage {
       await client.query('BEGIN')
 
       // Set state to failed + dedup expiry
-      await client.query(
-        `UPDATE "${this.#jobsTable}" SET state = $2, expires_at = $3 WHERE id = $1`,
-        [id, state, expiresAt]
-      )
+      await client.query(`UPDATE "${this.#jobsTable}" SET state = $2, expires_at = $3 WHERE id = $1`, [
+        id,
+        state,
+        expiresAt
+      ])
 
       // Store error
       await client.query(
@@ -808,10 +771,10 @@ export class PgStorage implements Storage {
       )
 
       // Remove from processing queue
-      await client.query(
-        `DELETE FROM "${this.#processingTable}" WHERE worker_id = $1 AND message = $2`,
-        [workerId, message]
-      )
+      await client.query(`DELETE FROM "${this.#processingTable}" WHERE worker_id = $1 AND message = $2`, [
+        workerId,
+        message
+      ])
 
       await client.query('COMMIT')
     } catch (err) {
@@ -851,24 +814,18 @@ export class PgStorage implements Storage {
       await client.query('BEGIN')
 
       // Set state to failing
-      await client.query(
-        `UPDATE "${this.#jobsTable}" SET state = $2 WHERE id = $1`,
-        [id, state]
-      )
+      await client.query(`UPDATE "${this.#jobsTable}" SET state = $2 WHERE id = $1`, [id, state])
 
       // Remove old message from processing queue
       if (oldMessage) {
-        await client.query(
-          `DELETE FROM "${this.#processingTable}" WHERE worker_id = $1 AND message = $2`,
-          [workerId, oldMessage]
-        )
+        await client.query(`DELETE FROM "${this.#processingTable}" WHERE worker_id = $1 AND message = $2`, [
+          workerId,
+          oldMessage
+        ])
       }
 
       // Add new message to queue
-      await client.query(
-        `INSERT INTO "${this.#queueTable}" (message) VALUES ($1)`,
-        [message]
-      )
+      await client.query(`INSERT INTO "${this.#queueTable}" (message) VALUES ($1)`, [message])
 
       await client.query('COMMIT')
     } catch (err) {
@@ -881,7 +838,7 @@ export class PgStorage implements Storage {
     // Notify after commit
     await this.notifyJobComplete(id, 'failing')
     await this.publishEvent(id, 'failing')
-    await this.#pool!.query(`SELECT pg_notify($1, '')`, [this.#newJobChannel])
+    await this.#pool!.query("SELECT pg_notify($1, '')", [this.#newJobChannel])
   }
 
   // ═══════════════════════════════════════════════════════════════════
@@ -916,10 +873,10 @@ export class PgStorage implements Storage {
 
   async releaseLeaderLock (lockKey: string, ownerId: string): Promise<boolean> {
     if (!this.#pool) return false
-    const result = await this.#pool.query(
-      `DELETE FROM "${this.#locksTable}" WHERE lock_key = $1 AND owner_id = $2`,
-      [lockKey, ownerId]
-    )
+    const result = await this.#pool.query(`DELETE FROM "${this.#locksTable}" WHERE lock_key = $1 AND owner_id = $2`, [
+      lockKey,
+      ownerId
+    ])
     return result.rowCount !== null && result.rowCount > 0
   }
 
