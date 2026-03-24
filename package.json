@@ -19,6 +19,7 @@
   "private": false,
   "files": [
     "dist",
+    "redis-scripts",
     "LICENSE",
     "README.md"
   ],
