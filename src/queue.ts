@@ -44,7 +44,7 @@ export class Queue<TPayload, TResult = void> extends EventEmitter<QueueEvents<TR
   constructor (config: QueueConfig<TPayload, TResult>) {
     super()
 
-    this.#storage = config.storage
+    this.#storage = config.name ? config.storage.createNamespace(config.name) : config.storage
     this.#workerId = config.workerId ?? randomUUID()
     this.#payloadSerde = config.payloadSerde ?? createJsonSerde<TPayload>()
     this.#resultSerde = config.resultSerde ?? createJsonSerde<TResult>()

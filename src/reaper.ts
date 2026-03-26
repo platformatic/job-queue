@@ -17,6 +17,7 @@ interface LeaderElectionConfig {
 
 interface ReaperConfig<TPayload> {
   storage: Storage
+  name?: string
   payloadSerde?: Serde<TPayload>
   visibilityTimeout?: number
   leaderElection?: LeaderElectionConfig
@@ -62,7 +63,7 @@ export class Reaper<TPayload> extends EventEmitter<ReaperEvents> {
 
   constructor (config: ReaperConfig<TPayload>) {
     super()
-    this.#storage = config.storage
+    this.#storage = config.name ? config.storage.createNamespace(config.name) : config.storage
     this.#payloadSerde = config.payloadSerde ?? createJsonSerde<TPayload>()
     this.#visibilityTimeout = config.visibilityTimeout ?? 30000
     this.#leaderElection = config.leaderElection ?? { enabled: false }

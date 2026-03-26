@@ -132,6 +132,9 @@ export interface QueueConfig<TPayload, TResult> {
   /** Storage backend (required) */
   storage: Storage
 
+  /** Queue name for namespace isolation (optional) */
+  name?: string
+
   /** Hook called after execution and before persisting terminal state */
   afterExecution?: AfterExecutionHook<TPayload, TResult>
 

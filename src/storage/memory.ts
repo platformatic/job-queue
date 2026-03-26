@@ -394,6 +394,10 @@ export class MemoryStorage implements Storage {
     }
   }
 
+  createNamespace (_name: string): Storage {
+    return new MemoryStorage()
+  }
+
   /**
    * Clear all data (useful for testing)
    */
