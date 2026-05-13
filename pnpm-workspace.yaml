@@ -1,0 +1,4 @@
+allowBuilds:
+  '@datadog/pprof': true
+  protobufjs: true
+  unrs-resolver: true
