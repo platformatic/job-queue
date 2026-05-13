@@ -32,7 +32,7 @@
     "typecheck": "tsc -p . --noEmit",
     "format": "prettier -w benchmark src test",
     "test": "c8 -c test/config/c8-local.json node --test-reporter=cleaner-spec-reporter --no-warnings --test --test-timeout=60000 'test/**/*.test.ts'",
-    "test:ci": "node --experimental-test-coverage --test-reporter=cleaner-spec-reporter --no-warnings --test --test-timeout=60000 'test/**/*.test.ts'",
+    "test:ci": "c8 -c test/config/c8-ci.json node --test-reporter=cleaner-spec-reporter --no-warnings --test --test-timeout=60000 'test/**/*.test.ts'",
     "test:docker:up": "docker-compose up -d --wait",
     "test:docker:down": "docker-compose down",
     "ci": "npm run build && npm run lint && npm run test:ci",

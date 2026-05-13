@@ -10,7 +10,7 @@ jobs:
   ci:
     strategy:
       matrix:
-        node-version: [22, 24, 26]
+        node-version: [22, 24]
     runs-on: ubuntu-latest
     timeout-minutes: 20
     services:
