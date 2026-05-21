@@ -261,6 +261,17 @@ queue.on('error', (error) => {
 
 ### Storage Backends
 
+#### Decision matrix — which backend should I pick?
+
+| Backend | Persistence | Multi-process (same host) | Multi-host | External service | Typical use |
+|---|---|---|---|---|---|
+| `MemoryStorage` | no | no | no | none | tests, single-process scripts |
+| `FileStorage` | yes (filesystem) | yes (atomic renames) | no | none | single-host persistent without SQL |
+| `SQLiteStorage` | yes (SQLite WAL) | **no** (single-process only) | no | none | embedded, persistent, transactional, queryable, single Node process |
+| `RedisStorage` | yes (AOF/RDB) | yes | yes | Redis / Valkey | high-throughput production |
+
+Cross-process job queues require `RedisStorage`. `SQLiteStorage` is **explicitly single-process** — it asserts `process.pid` on every call and throws if you fork after `connect()`.
+
 #### MemoryStorage
 
 In-memory storage for development and testing.
@@ -308,6 +319,52 @@ Features:
 - FIFO ordering via sequence numbers
 - `fs.watch` for real-time notifications
 - Survives process restarts
+
+#### SQLiteStorage
+
+Embedded, persistent, transactional queue for a **single Node process**. Uses the built-in `node:sqlite` module (no native build, no install step beyond this library) with WAL journal mode.
+
+```typescript
+import { SQLiteStorage } from '@platformatic/job-queue'
+
+// In-memory (default — useful for tests or ephemeral queues)
+const memoryDb = new SQLiteStorage()
+
+// File-backed (persistence)
+const persistent = new SQLiteStorage({
+  path: '/var/lib/myapp/jobs.sqlite'
+})
+```
+
+Configuration:
+
+```typescript
+new SQLiteStorage({
+  path: ':memory:',                // default — explicit path required for persistence
+  tablePrefix: 'jq_',
+  cleanupIntervalMs: 30_000,       // or false to disable background cleanup
+  vacuum: { enabled: true, intervalMs: 24 * 60 * 60 * 1000 }, // or false
+  pragmas: { busy_timeout: 100 },  // override defaults; merged with WAL/synchronous/etc.
+  logger                           // pino-compatible
+})
+```
+
+Features:
+- Built-in driver: `node:sqlite` (Node 22+).
+- WAL journal mode with `BEGIN IMMEDIATE` for atomic dequeue
+- In-process write mutex prevents event-loop stalls under contention
+- `node:sqlite` returns `Uint8Array` for BLOBs; `SQLiteStorage` normalizes everything to `Buffer`
+- Leader-elected background cleanup of expired results, errors, workers, locks
+- Periodic `PRAGMA optimize` to keep query plans current
+- Schema version stored in `<prefix>meta`; refuses to start on future-version drift
+
+**Single-process only.** On every call `SQLiteStorage` asserts that `process.pid` matches the pid at `connect()` and throws otherwise. If you fork your worker pool after `connect()`, each child must call `connect()` itself. For genuine multi-process queues use `PgStorage`.
+
+**Filesystem requirements.** WAL mode requires a local filesystem that supports POSIX advisory locking. NFS, SMB, and some container bind-mounts do not — `SQLiteStorage` will log a warning if WAL mode is requested but not active.
+
+**Backups.** A file-backed SQLite database has up to three on-disk artifacts: `<path>`, `<path>-wal`, and `<path>-shm`. Don't `cp` them while the queue is running — use `sqlite3 <path> '.backup <dest>'` or `VACUUM INTO`. The shm file is recreated automatically; you don't need to back it up.
+
+**Schema contract.** `SQLiteStorage` writes a row `(schema_version = '1')` into `<prefix>meta` on first connect. Within the `0.x` line schema changes are non-breaking. A future major version may bump the version and require a migration; `connect()` will refuse to start if it sees an unknown future version.
 
 ### Reaper
 

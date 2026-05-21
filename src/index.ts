@@ -37,6 +37,7 @@ export { MemoryStorage } from './storage/memory.ts'
 export { RedisStorage } from './storage/redis.ts'
 export { FileStorage } from './storage/file.ts'
 export { PgStorage } from './storage/pg.ts'
+export { SQLiteStorage } from './storage/sqlite.ts'
 
 // Queue
 export { Queue } from './queue.ts'

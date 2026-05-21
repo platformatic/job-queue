@@ -9,6 +9,7 @@ import { Reaper } from '../../src/reaper.ts'
 import { MemoryStorage } from '../../src/storage/memory.ts'
 import { FileStorage } from '../../src/storage/file.ts'
 import { RedisStorage } from '../../src/storage/redis.ts'
+import { SQLiteStorage } from '../../src/storage/sqlite.ts'
 import type { Storage } from '../../src/storage/types.ts'
 import type { Job } from '../../src/types.ts'
 import { once, waitForEvents, createLatch } from '../helpers/events.ts'
@@ -43,6 +44,16 @@ const fileStorageFactory: StorageFactory = async () => {
   }
 }
 
+const sqliteStorageFactory: StorageFactory = async () => {
+  const storage = new SQLiteStorage()
+  return {
+    storage,
+    cleanup: async () => {
+      await (storage as SQLiteStorage).clear()
+    }
+  }
+}
+
 const redisStorageFactory: StorageFactory = async () => {
   if (!process.env.REDIS_URL) {
     throw new Error('REDIS_URL not set')
@@ -64,7 +75,8 @@ const redisStorageFactory: StorageFactory = async () => {
 function getStorageFactories (): Array<{ name: string; factory: StorageFactory }> {
   const factories: Array<{ name: string; factory: StorageFactory }> = [
     { name: 'MemoryStorage', factory: memoryStorageFactory },
-    { name: 'FileStorage', factory: fileStorageFactory }
+    { name: 'FileStorage', factory: fileStorageFactory },
+    { name: 'SQLiteStorage', factory: sqliteStorageFactory }
   ]
 
   if (process.env.REDIS_URL) {
